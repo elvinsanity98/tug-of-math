@@ -41,13 +41,16 @@ vercel.com → **Add New → Project** → import this repository → Framework 
 ### Supabase (accounts, coins, ranks, online play)
 
 1. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `config.js`. Never put the `service_role` / secret key there; the file is public.
-2. **Authentication → Sign In / Providers**: turn on **Allow anonymous sign-ins**. Players get an account automatically, with no email; it stays in their browser.
-3. **SQL Editor**: run `supabase/schema.sql`, then `supabase/002_modes_ranks_skins.sql`. Coins, stars and purchases only change through the database functions in these files, never directly from the page.
-4. If online play cannot connect, open **Realtime → Settings** and make sure public channels are allowed.
+2. **Authentication → Sign In / Providers → Email**: keep Email on and turn **Confirm email** off, so players can play right after signing up. (Supabase's built-in mailer only reaches your own team's addresses; connect an email service under **Authentication → SMTP** before turning confirmation on.) **Allow anonymous sign-ins** can stay off.
+3. **Authentication → URL Configuration**: set **Site URL** to the game's address and add it (plus `http://localhost/**` for testing) to **Redirect URLs**, so password-reset links come back to the game.
+4. **SQL Editor**: run `supabase/schema.sql`, then `supabase/002_modes_ranks_skins.sql`. Coins, stars and purchases only change through the database functions in these files, never directly from the page.
+5. If online play cannot connect, open **Realtime → Settings** and make sure public channels are allowed.
+
+Players sign up with a player name, email and password, then sign in on any device. **Forgot password?** emails a reset link (it needs working email, see step 2). The player name shows on leaderboards; emails are never shown to other players.
 
 To remove a player, delete the user under **Authentication → Users**; their profile, skins and results go with it.
 
-Without Supabase or internet the game still runs as a guest: Same PC, vs computer and LAN rooms work, and coins, ranks and the shop switch off.
+When the game server cannot be reached, a **Play offline as a guest** button appears: Same PC, vs computer and LAN rooms work, and coins, ranks and the shop switch off.
 
 ### LAN (same Wi-Fi, no internet needed)
 

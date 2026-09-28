@@ -73,26 +73,144 @@
     }
   })();
 
-  ready = DB.init().then(p => {
-    me = p;
-    $('landStatus').textContent = DB.online
-      ? `Signed in as ${me.display_name}. Your coins and rank are saved.`
-      : 'Offline mode: Same PC, vs computer and LAN rooms still work. Coins, ranks and the shop need the internet.';
-    $('landGo').textContent = 'Tap to play';
-    return p;
+  /* ---------- account: sign in, create account, reset password ---------- */
+  function authMsg(text, bad) {
+    const m = $('authMsg');
+    m.textContent = text || '';
+    m.className = 'auth-msg' + (bad ? ' bad' : '');
+  }
+  // which: 'in' | 'up' | 'reset'
+  function authTab(which) {
+    $('signInForm').hidden = which !== 'in';
+    $('signUpForm').hidden = which !== 'up';
+    $('resetForm').hidden = which !== 'reset';
+    $('auth').querySelector('.auth-tabs').hidden = which === 'reset';
+    for (const [id, on] of [['tabIn', which === 'in'], ['tabUp', which === 'up']]) {
+      $(id).classList.toggle('on', on);
+      $(id).setAttribute('aria-selected', String(on));
+    }
+    authMsg('');
+  }
+  // state: 'in' | 'out' | 'recovery' | 'offline'
+  function landingState(state) {
+    const signedIn = state === 'in';
+    $('auth').hidden = !(state === 'out' || state === 'recovery');
+    $('landGo').hidden = !signedIn;
+    $('landSignOut').hidden = !signedIn;
+    $('offlineGo').hidden = state !== 'offline';
+    const status = $('landStatus');
+    if (signedIn) {
+      $('landGo').textContent = `Play as ${me.display_name}`;
+      status.textContent = 'Signed in. Your coins and rank are saved.';
+    } else if (state === 'out') {
+      authTab('in');
+      status.textContent = '';
+      if (DB.linkError) authMsg(`That link did not work (${DB.linkError}). Ask for a new one.`, true);
+    } else if (state === 'recovery') {
+      authTab('reset');
+      status.textContent = '';
+    } else {
+      status.textContent = "Can't reach the game server, so accounts are unavailable. You can still play Same PC, vs computer and LAN rooms as a guest.";
+    }
+  }
+  ready = DB.init().then(state => {
+    me = DB.profile;
+    landingState(state);
+    return state;
   });
 
+  function busy(form, on) { form.querySelectorAll('input, button').forEach(el => { el.disabled = on; }); }
+  const validEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+  async function submitAuth(form, check, run) {
+    const problem = check();
+    if (problem) { authMsg(problem[0], true); problem[1].focus(); return; }
+    busy(form, true);
+    try { await run(); }
+    catch (err) { authMsg(err.message, true); }
+    finally { busy(form, false); }
+  }
+  $('tabIn').addEventListener('click', () => { authTab('in'); $('inEmail').focus(); });
+  $('tabUp').addEventListener('click', () => { authTab('up'); $('upName').focus(); });
+  $('signInForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const mail = $('inEmail').value.trim(), pass = $('inPass').value;
+    submitAuth(e.target,
+      () => !validEmail(mail) ? ['Type the email you signed up with.', $('inEmail')] : !pass ? ['Type your password.', $('inPass')] : null,
+      async () => {
+        authMsg('Signing in…');
+        await DB.signIn(mail, pass);
+        $('inPass').value = '';
+        me = DB.profile;
+        enter();
+      });
+  });
+  $('signUpForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const name = clean($('upName').value), mail = $('upEmail').value.trim(), pass = $('upPass').value;
+    submitAuth(e.target,
+      () => !name ? ['Pick a player name. Everyone sees it on the leaderboard.', $('upName')]
+        : !validEmail(mail) ? ['Type a real email address.', $('upEmail')]
+        : pass.length < 6 ? ['Use at least 6 characters for the password.', $('upPass')] : null,
+      async () => {
+        authMsg('Creating your account…');
+        const res = await DB.signUp(name, mail, pass);
+        $('upPass').value = '';
+        if (res === 'confirm') {
+          authTab('in');
+          $('inEmail').value = mail;
+          authMsg('Account created. Open the link in your email to confirm it, then sign in.');
+          return;
+        }
+        me = DB.profile;
+        enter();
+      });
+  });
+  $('forgotBtn').addEventListener('click', () => {
+    const mail = $('inEmail').value.trim();
+    submitAuth($('signInForm'),
+      () => !validEmail(mail) ? ['Type your email above first, then press Forgot password.', $('inEmail')] : null,
+      async () => {
+        await DB.resetPassword(mail);
+        authMsg('If that email has an account, a reset link is on its way. Check the spam folder too.');
+      });
+  });
+  $('resetForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const pass = $('newPass').value;
+    submitAuth(e.target,
+      () => pass.length < 6 ? ['Use at least 6 characters.', $('newPass')] : null,
+      async () => {
+        await DB.updatePassword(pass);
+        $('newPass').value = '';
+        toast('Password changed.');
+        me = DB.profile;
+        enter();
+      });
+  });
+  async function signOut() {
+    Net.leave();
+    R = null; Q = null;
+    if (Game.active) Game.stop();
+    closeOverlays();
+    try { await DB.signOut(); } catch (e) { /* the local session is gone either way */ }
+    me = null;
+    show('landing');
+    landingState('out');
+    $('inEmail').focus();
+  }
+  $('landSignOut').addEventListener('click', signOut);
+  $('offlineGo').addEventListener('click', () => enter());
+
   let entering = false;
-  async function enter() {
-    if (entering) return;
+  function enter() {
+    if (entering || !me) return;
     entering = true;
     Sfx.ensure(); Sfx.click();
-    $('landGo').textContent = 'Loading…';
-    await ready;
     show('dash');
     renderDash();
     showView('home');
     Net.detect();
+    entering = false;
     const hashJoin = /^#join-([A-Z0-9]{5})$/i.exec(location.hash);
     if (hashJoin) { history.replaceState(null, '', location.pathname); joinRoom(hashJoin[1].toUpperCase()); }
   }
@@ -315,6 +433,8 @@
   function renderProfile() {
     $('nameIn').value = me.display_name;
     $('nameNote').textContent = DB.online ? '' : 'Offline: your name is saved in this browser only.';
+    $('accountMail').textContent = DB.online ? `Signed in as ${DB.email}` : 'Playing offline as a guest.';
+    $('signOutBtn').hidden = !DB.online;
     const rate = me.games_played ? Math.round(me.wins / me.games_played * 100) + '%' : '—';
     const stats = [
       ['Games', me.games_played], ['Wins', me.wins], ['Win rate', rate], ['Best streak', me.best_streak],
@@ -332,6 +452,7 @@
     renderDash();
   }
   $('nameSave').addEventListener('click', saveName);
+  $('signOutBtn').addEventListener('click', signOut);
   $('nameIn').addEventListener('keydown', e => { if (e.key === 'Enter') saveName(); });
 
   /* ---------- sound ---------- */
@@ -931,7 +1052,8 @@
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const tag = document.activeElement && document.activeElement.tagName;
     if (!$('landing').hidden) {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enter(); }
+      // forms handle their own keys; Enter on the landing screen plays when signed in
+      if (e.key === 'Enter' && !$('landGo').hidden && tag !== 'INPUT' && tag !== 'BUTTON') { e.preventDefault(); enter(); }
       return;
     }
     if (e.key === 'Escape') {

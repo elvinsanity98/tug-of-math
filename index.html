@@ -26,8 +26,36 @@
       <g class="team-r"><circle cx="554" cy="30" r="12"/><rect x="542" y="42" width="24" height="30" rx="8"/></g>
     </svg>
     <p class="land-tag">Solve fast. Pull hard. Climb the ranks.</p>
-    <button class="go land-go" id="landGo" type="button">Tap to play</button>
-    <p class="land-status" id="landStatus" aria-live="polite">Getting your profile ready…</p>
+    <button class="go land-go" id="landGo" type="button" hidden>Play</button>
+    <div class="auth" id="auth" hidden>
+      <div class="auth-tabs" role="tablist" aria-label="Account">
+        <button type="button" role="tab" id="tabIn" aria-selected="true" aria-controls="signInForm" class="on">Sign in</button>
+        <button type="button" role="tab" id="tabUp" aria-selected="false" aria-controls="signUpForm">Create account</button>
+      </div>
+      <form class="auth-form" id="signInForm" novalidate>
+        <label class="auth-field"><span>Email</span><input type="email" id="inEmail" autocomplete="email" inputmode="email" required></label>
+        <label class="auth-field"><span>Password</span><input type="password" id="inPass" autocomplete="current-password" required></label>
+        <button class="go" type="submit">Sign in</button>
+        <button class="link-btn" type="button" id="forgotBtn">Forgot password?</button>
+      </form>
+      <form class="auth-form" id="signUpForm" novalidate hidden>
+        <label class="auth-field"><span>Player name</span><input type="text" id="upName" maxlength="14" autocomplete="nickname" spellcheck="false" required></label>
+        <label class="auth-field"><span>Email</span><input type="email" id="upEmail" autocomplete="email" inputmode="email" required></label>
+        <label class="auth-field"><span>Password <small>at least 6 characters</small></span><input type="password" id="upPass" autocomplete="new-password" minlength="6" required></label>
+        <button class="go" type="submit">Create account</button>
+      </form>
+      <form class="auth-form" id="resetForm" novalidate hidden>
+        <p class="auth-lede">Choose a new password for your account.</p>
+        <label class="auth-field"><span>New password <small>at least 6 characters</small></span><input type="password" id="newPass" autocomplete="new-password" minlength="6" required></label>
+        <button class="go" type="submit">Save password</button>
+      </form>
+      <p class="auth-msg" id="authMsg" role="status" aria-live="polite"></p>
+    </div>
+    <p class="land-status" id="landStatus" aria-live="polite">Checking your account…</p>
+    <div class="land-links">
+      <button class="link-btn light" id="landSignOut" type="button" hidden>Not you? Sign out</button>
+      <button class="link-btn light" id="offlineGo" type="button" hidden>Play offline as a guest</button>
+    </div>
   </div>
   <p class="credit land-credit">Developed by <b>BongDevz</b></p>
 </section>
@@ -165,6 +193,11 @@
             <button class="pill-btn" id="nameSave" type="button">Save</button>
           </div>
           <p class="board-note" id="nameNote" aria-live="polite"></p>
+          <div class="account-box" id="accountBox">
+            <span class="f-label">Account</span>
+            <p class="account-mail" id="accountMail"></p>
+            <button class="ghost" id="signOutBtn" type="button">Sign out</button>
+          </div>
         </div>
         <div class="table-card">
           <h3 class="card-h">Your stats</h3>

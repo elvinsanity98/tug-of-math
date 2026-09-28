@@ -1,6 +1,6 @@
 /* Tug of Math — player account, coins, skins, ranks, results and the leaderboard (Supabase).
-   A player gets an anonymous account on first visit (no email needed); the
-   session stays in this browser. Without Supabase or internet the game runs
+   Players sign up and sign in with email and password; the session stays in
+   the browser until they sign out. Without Supabase or internet the game runs
    with a local guest profile and the online features are switched off.
    The same client also carries online play (see net.js). Tables: supabase/*.sql. */
 const DB = (() => {
@@ -8,6 +8,10 @@ const DB = (() => {
   const GUEST_KEY = 'tug-of-math-guest';
   const cfg = window.TUG_CONFIG || {};
   const configured = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
+  // a password-reset link lands here with #...type=recovery (or #error=... when it has expired)
+  const landedHash = location.hash;
+  const recovering = /type=recovery/.test(landedHash);
+  const linkError = (/error_description=([^&]+)/.exec(landedHash) || [])[1];
   const BOARDS = {
     wins:    { col: 'wins', asc: false },
     rank:    { col: 'rank_stars', asc: false, where: ['ranked_played', 0] },
@@ -16,9 +20,10 @@ const DB = (() => {
     fastest: { col: 'fastest_ms', asc: true },
   };
   const COLS = 'id, display_name, games_played, wins, best_streak, total_correct, fastest_ms, rank_stars, skin';
-  let loading = null, signing = null;
+  let loading = null;
   let online = false;
   let profile = null;
+  let email = '';
   let owned = new Set(['classic']);
 
   function loadScript(src) {
@@ -42,26 +47,20 @@ const DB = (() => {
     if (!loading) loading = create().catch(e => { loading = null; throw e; });
     return loading;
   }
-  async function currentUser() {
-    const sb = await client();
-    const { data } = await sb.auth.getSession();
-    return data.session ? data.session.user : null;
-  }
-  function signIn() {
-    if (!signing) {
-      signing = (async () => {
-        const user = await currentUser();
-        if (user) return user;
-        const { data, error } = await (await client()).auth.signInAnonymously();
-        if (error) throw error;
-        return data.user;
-      })().catch(e => { signing = null; throw e; });
-    }
-    return signing;
-  }
   const fail = (error, fallback) => new Error((error && error.message) || fallback);
+  // Supabase's auth messages, in plain words
+  function authError(error) {
+    const m = (error && error.message) || '';
+    if (/invalid login credentials/i.test(m)) return new Error('Wrong email or password.');
+    if (/already registered|already been registered|already exists/i.test(m)) return new Error('That email already has an account. Sign in instead.');
+    if (/email not confirmed/i.test(m)) return new Error('Confirm your email first (check your inbox), then sign in.');
+    if (/signups? not allowed|signup is disabled/i.test(m)) return new Error('New accounts are switched off in Supabase (Authentication → Sign In / Providers → Email).');
+    if (/rate limit|too many/i.test(m)) return new Error('Too many tries. Wait a minute and try again.');
+    if (/failed to fetch|network/i.test(m)) return new Error('Could not reach the server. Check the internet connection.');
+    return new Error(m || 'Something went wrong. Try again.');
+  }
 
-  /* ---------- profile ---------- */
+  /* ---------- account ---------- */
   function readGuest() {
     let g = null;
     try { g = JSON.parse(localStorage.getItem(GUEST_KEY) || 'null'); } catch (e) { /* storage blocked */ }
@@ -72,23 +71,39 @@ const DB = (() => {
   function writeGuest() {
     try { localStorage.setItem(GUEST_KEY, JSON.stringify({ id: profile.id, display_name: profile.display_name })); } catch (e) { /* storage blocked */ }
   }
-  // sign in and load the profile; falls back to a guest when Supabase is unreachable
+  function goOffline() {
+    online = false;
+    profile = readGuest();
+    owned = new Set(['classic']);
+  }
+  function cleanUrl() {
+    if (recovering || linkError) history.replaceState(null, '', location.pathname + location.search);
+  }
+  /* Resolves to 'in' (signed in, profile loaded), 'out' (needs to sign in),
+     'recovery' (came from a reset link: needs a new password) or 'offline'. */
   async function init() {
+    let sb;
+    try { sb = await client(); } catch (e) { goOffline(); return 'offline'; }
     try {
-      await signIn();
-      await refresh();
+      const { data } = await sb.auth.getSession();
+      let user = data.session && data.session.user;
+      if (user && user.is_anonymous) { await sb.auth.signOut({ scope: 'local' }); user = null; }   // from the old no-login version
+      cleanUrl();
+      if (!user) return 'out';
+      await refresh(user);
       online = true;
+      return recovering ? 'recovery' : 'in';
     } catch (e) {
       console.warn('Tug of Math: playing offline.', e && e.message);
-      online = false;
-      profile = readGuest();
-      owned = new Set(['classic']);
+      goOffline();
+      return 'offline';
     }
-    return profile;
   }
-  async function refresh() {
-    const user = await signIn();
+  async function refresh(user) {
     const sb = await client();
+    if (!user) { const { data } = await sb.auth.getUser(); user = data.user; }
+    if (!user) throw new Error('Not signed in.');
+    email = user.email || '';
     const [p, o] = await Promise.all([
       sb.from('profiles').select('*').eq('id', user.id).maybeSingle(),
       sb.from('owned_skins').select('skin_id'),
@@ -99,6 +114,38 @@ const DB = (() => {
     profile = p.data;
     owned = new Set(['classic', ...((o.data || []).map(r => r.skin_id))]);
     return profile;
+  }
+  async function signUp(name, mail, password) {
+    const sb = await client();
+    const { data, error } = await sb.auth.signUp({ email: mail, password, options: { data: { display_name: name } } });
+    if (error) throw authError(error);
+    if (!data.session) return 'confirm';       // "Confirm email" is on in Supabase
+    await refresh(data.user);
+    online = true;
+    await setName(name);
+    return 'in';
+  }
+  async function signIn(mail, password) {
+    const sb = await client();
+    const { data, error } = await sb.auth.signInWithPassword({ email: mail, password });
+    if (error) throw authError(error);
+    await refresh(data.user);
+    online = true;
+  }
+  async function signOut() {
+    const sb = await client();
+    await sb.auth.signOut();
+    online = false; profile = null; email = ''; owned = new Set(['classic']);
+  }
+  async function resetPassword(mail) {
+    const sb = await client();
+    const { error } = await sb.auth.resetPasswordForEmail(mail, { redirectTo: location.origin + location.pathname });
+    if (error) throw authError(error);
+  }
+  async function updatePassword(password) {
+    const sb = await client();
+    const { error } = await sb.auth.updateUser({ password });
+    if (error) throw authError(error);
   }
   async function setName(name) {
     if (!name || !profile || name === profile.display_name) return;
@@ -173,8 +220,11 @@ const DB = (() => {
   }
 
   return {
-    configured, client, init, refresh, setName, saveResult, buySkin, equipSkin, leaderboard, history,
+    configured, client, init, refresh, signUp, signIn, signOut, resetPassword, updatePassword, setName,
+    saveResult, buySkin, equipSkin, leaderboard, history,
     get online() { return online; },
+    get email() { return email; },
+    get linkError() { return linkError ? decodeURIComponent(linkError.split('+').join(' ')) : ''; },
     get profile() { return profile; },
     owns: id => owned.has(id),
   };
