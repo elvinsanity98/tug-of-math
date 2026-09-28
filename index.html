@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tug of Math</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Lilita+One&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="logo"><span class="r">Tug</span> of <span class="b">Math</span></div>
+    <div class="tools">
+      <button class="tool" id="soundBtn" type="button" aria-pressed="true">Sound: On</button>
+      <button class="tool" id="menuBtn" type="button">New game</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="panel red" id="panelL" aria-label="Red team">
+      <div class="p-head">
+        <span class="p-name" id="nameL">Red Team</span>
+        <span class="p-stat"><b id="pullsL">0</b> pulls</span>
+      </div>
+      <div class="p-body">
+        <div class="q-row"><span class="q-label">Solve to pull</span><span class="streak" id="streakL"></span></div>
+        <div class="q" id="qL">?</div>
+        <div class="answers" id="ansL"></div>
+        <div class="meter" title="Strength of your last pull"><i id="powL"></i></div>
+        <div class="msg" id="msgL">Faster answers pull harder</div>
+      </div>
+    </section>
+
+    <div class="arena" id="arena">
+      <canvas id="scene" aria-label="Tug of war field"></canvas>
+      <div class="timer" id="timer">1:30</div>
+      <div class="count" id="count" hidden></div>
+    </div>
+
+    <section class="panel blue" id="panelR" aria-label="Blue team">
+      <div class="p-head">
+        <span class="p-name" id="nameR">Blue Team</span>
+        <span class="p-stat"><b id="pullsR">0</b> pulls</span>
+      </div>
+      <div class="p-body">
+        <div class="q-row"><span class="q-label">Solve to pull</span><span class="streak" id="streakR"></span></div>
+        <div class="q" id="qR">?</div>
+        <div class="answers" id="ansR"></div>
+        <div class="meter" title="Strength of your last pull"><i id="powR"></i></div>
+        <div class="msg" id="msgR">Faster answers pull harder</div>
+      </div>
+    </section>
+  </main>
+
+  <p class="keys">
+    <span><b class="kr">Red</b> <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd> or <kbd>1</kbd>–<kbd>4</kbd></span>
+    <span><b class="kb">Blue</b> <kbd>J</kbd><kbd>K</kbd><kbd>L</kbd><kbd>;</kbd> or <kbd>7</kbd>–<kbd>0</kbd></span>
+    <span>or tap the answers</span>
+  </p>
+</div>
+
+<div class="overlay" id="menu">
+  <div class="card">
+    <h1 class="card-title"><span class="r">Tug</span> of <span class="b">Math</span></h1>
+    <p class="lede">Every right answer is a pull on the rope, and a quick answer pulls harder. Drag the gold ribbon over your line to win.</p>
+
+    <div class="field">
+      <span class="f-label">Players</span>
+      <div class="seg" role="radiogroup" aria-label="Players">
+        <input type="radio" name="mode" id="mode-2p" value="2p" checked><label for="mode-2p">2 players</label>
+        <input type="radio" name="mode" id="mode-cpu" value="cpu"><label for="mode-cpu">Vs computer</label>
+      </div>
+    </div>
+    <div class="field">
+      <label class="f-label" for="nameInL">Names</label>
+      <div class="names" id="nameGrid">
+        <input type="text" id="nameInL" class="name-in red" maxlength="14" placeholder="Red Team" autocomplete="off" spellcheck="false" aria-label="Red side name">
+        <input type="text" id="nameInR" class="name-in blue" maxlength="14" placeholder="Blue Team" autocomplete="off" spellcheck="false" aria-label="Blue side name">
+      </div>
+    </div>
+    <div class="field" id="cpuField" hidden>
+      <span class="f-label">Computer</span>
+      <div class="seg" role="radiogroup" aria-label="Computer strength">
+        <input type="radio" name="cpu" id="cpu-easy" value="easy"><label for="cpu-easy">Rookie</label>
+        <input type="radio" name="cpu" id="cpu-medium" value="medium" checked><label for="cpu-medium">Athlete</label>
+        <input type="radio" name="cpu" id="cpu-hard" value="hard"><label for="cpu-hard">Champion</label>
+      </div>
+    </div>
+    <div class="field">
+      <span class="f-label">Math</span>
+      <div class="seg ops" role="radiogroup" aria-label="Operation">
+        <input type="radio" name="op" id="op-add" value="add"><label for="op-add">+</label>
+        <input type="radio" name="op" id="op-sub" value="sub"><label for="op-sub">−</label>
+        <input type="radio" name="op" id="op-mul" value="mul"><label for="op-mul">×</label>
+        <input type="radio" name="op" id="op-div" value="div"><label for="op-div">÷</label>
+        <input type="radio" name="op" id="op-mix" value="mix" checked><label for="op-mix">Mix</label>
+      </div>
+    </div>
+    <div class="field">
+      <span class="f-label">Level</span>
+      <div class="seg" role="radiogroup" aria-label="Level">
+        <input type="radio" name="diff" id="diff-easy" value="easy" checked><label for="diff-easy">Easy</label>
+        <input type="radio" name="diff" id="diff-medium" value="medium"><label for="diff-medium">Medium</label>
+        <input type="radio" name="diff" id="diff-hard" value="hard"><label for="diff-hard">Hard</label>
+      </div>
+    </div>
+    <div class="field">
+      <span class="f-label">Round</span>
+      <div class="seg" role="radiogroup" aria-label="Round length">
+        <input type="radio" name="time" id="time-60" value="60"><label for="time-60">60 s</label>
+        <input type="radio" name="time" id="time-90" value="90" checked><label for="time-90">90 s</label>
+        <input type="radio" name="time" id="time-0" value="0"><label for="time-0">No limit</label>
+      </div>
+    </div>
+
+    <button class="go" id="startBtn" type="button">Start the tug</button>
+    <p class="fine">Red: A S D F &nbsp;·&nbsp; Blue: J K L ; &nbsp;·&nbsp; or tap. Enter starts.</p>
+  </div>
+</div>
+
+<div class="overlay" id="result" hidden>
+  <div class="card">
+    <p class="eyebrow" id="resEyebrow">Round over</p>
+    <h2 class="res-title" id="resTitle">Red Team wins!</h2>
+    <p class="lede" id="resSub"></p>
+    <table class="stats">
+      <thead><tr><th></th><th class="kr" id="resNameL">Red</th><th class="kb" id="resNameR">Blue</th></tr></thead>
+      <tbody id="resBody"></tbody>
+    </table>
+    <div class="res-actions">
+      <button class="go" id="againBtn" type="button">Rematch</button>
+      <button class="ghost" id="setBtn" type="button">Change settings</button>
+    </div>
+  </div>
+</div>
+
+<script src="scene.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
