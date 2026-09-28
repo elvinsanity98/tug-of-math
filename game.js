@@ -1,12 +1,10 @@
-/* Tug of Math — rules, questions, input, computer player, online play and sound.
-   Moves the rope by writing to the scene state `S` from scene.js.
-   Online: the host runs the rules and sends events; the guest sends its
-   answers and plays back what the host reports (see net.js for the link). */
-(() => {
+/* Tug of Math — the match: 1 to 5 players a side, questions, computer players,
+   pulls on the rope, the clock and online sync. Screens and menus live in app.js.
+   Offline (Same PC, vs computer) this device runs everything. Online, the host
+   runs the rope, the clock and the computer players; each device judges its own
+   player's answers and tells the room about every pull. */
+const Game = (() => {
   const $ = id => document.getElementById(id);
-  const settings = { mode: 'local', cpu: 'medium', op: 'mix', diff: 'easy', time: 90, names: { L: '', R: '' } };
-  const NAMES_KEY = 'tug-of-math-names';
-
   const KEYS = {
     L: { KeyA: 0, KeyS: 1, KeyD: 2, KeyF: 3, Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 },
     R: { KeyJ: 0, KeyK: 1, KeyL: 2, Semicolon: 3, Digit7: 0, Digit8: 1, Digit9: 2, Digit0: 3 },
@@ -18,58 +16,18 @@
     hard:   { min: 1.05, max: 2.0, acc: 0.95, name: 'Champion' },
   };
   const DEFAULT_MSG = 'Faster answers pull harder';
-  const NET_HINT = 'Host a game to get a room code, or type a friend’s code and join.';
+  const NET_EVENTS = new Set(['pull', 'sync', 'end', 'left']);
+  const handlers = { end() {} };
+  let M = null;       // the match being played
+  let qid = 0;
 
-  /* ---------- state ---------- */
-  function makeSide(k) {
-    return { k, q: null, qStart: 0, lockUntil: 0, streak: 0, best: 0, correct: 0, wrong: 0, fastest: Infinity, timeSum: 0 };
-  }
-  const G = {
-    state: 'menu', timeLeft: 0, elapsed: 0, shownSec: -1, qid: 0, syncT: 0, oppName: '',
-    sides: { L: makeSide('L'), R: makeSide('R') }, timers: new Set(), cpuIds: [],
-  };
-
-  function later(fn, ms) {
-    const id = setTimeout(() => { G.timers.delete(id); fn(); }, ms);
-    G.timers.add(id);
+  const later = (fn, ms) => {
+    const m = M;
+    const id = setTimeout(() => { if (M === m) { m.timers.delete(id); fn(); } }, ms);
+    m.timers.add(id);
     return id;
-  }
-  function clearTimers() { G.timers.forEach(clearTimeout); G.timers.clear(); G.cpuIds = []; }
-
-  /* who controls which side */
-  const online = () => settings.mode === 'online';
-  const isHost = () => online() && Net.role === 'host';
-  const isGuest = () => online() && Net.role === 'guest';
-  const mySide = () => (isGuest() ? 'R' : 'L');
-  const isCpu = k => k === 'R' && settings.mode === 'cpu';
-  const isRemote = k => online() && k !== mySide();
-  const broadcast = msg => { if (isHost()) Net.send(msg); };
-  const clean = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 14);
-
-  /* ---------- UI refs + answer buttons ---------- */
-  const ui = {};
-  for (const k of ['L', 'R']) {
-    ui[k] = { panel: $('panel' + k), q: $('q' + k), wrap: $('ans' + k), msg: $('msg' + k), pow: $('pow' + k),
-      pulls: $('pulls' + k), streak: $('streak' + k), name: $('name' + k), btns: [] };
-    for (let i = 0; i < 4; i++) {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'ans'; b.id = `ans${k}${i}`;
-      b.innerHTML = `<span class="key">${KEY_LABEL[k][i]}</span><span class="val">–</span>`;
-      b.addEventListener('pointerdown', e => { if (e.button > 0) return; e.preventDefault(); answer(k, i, 'tap'); });
-      b.addEventListener('click', e => { if (e.detail === 0) answer(k, i, 'key'); });   // keyboard activation
-      ui[k].wrap.appendChild(b); ui[k].btns.push(b);
-    }
-  }
-  function pressFx(b) { b.classList.add('press'); setTimeout(() => b.classList.remove('press'), 110); }
-  function setMsg(k, text, cls) { const m = ui[k].msg; m.textContent = text; m.className = 'msg' + (cls ? ' ' + cls : ''); }
-  function setStats(k, correct, streak) {
-    ui[k].pulls.textContent = correct;
-    ui[k].streak.textContent = streak >= 2 ? `${streak} in a row` : '';
-  }
-  function teamName(k) {
-    if (k === 'L') return settings.names.L || 'Red Team';
-    return isCpu('R') ? 'Computer' : settings.names.R || 'Blue Team';
-  }
+  };
+  function clearTimers() { if (M) { M.timers.forEach(clearTimeout); M.timers.clear(); } }
 
   /* ---------- questions ---------- */
   const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
@@ -80,15 +38,14 @@
     mul: { easy: [[1, 5], [1, 10]], medium: [[2, 10], [2, 12]], hard: [[4, 15], [6, 19]] },
     div: { easy: [[2, 5], [1, 10]], medium: [[2, 10], [2, 12]], hard: [[4, 15], [6, 19]] },
   };
-  function buildQuestion() {
-    const op = settings.op === 'mix' ? ['add', 'sub', 'mul', 'div'][rnd(0, 3)] : settings.op;
-    const d = settings.diff;
+  function buildQuestion(opSetting, d) {
+    const op = opSetting === 'mix' ? ['add', 'sub', 'mul', 'div'][rnd(0, 3)] : opSetting;
     let a, b, ans, text;
     if (op === 'add') { const [lo, hi] = RANGES.add[d]; a = rnd(lo, hi); b = rnd(lo, hi); ans = a + b; text = `${a} + ${b}`; }
     else if (op === 'sub') { const [lo, hi] = RANGES.sub[d]; b = rnd(lo, hi); ans = rnd(lo - 1, hi); a = ans + b; text = `${a} − ${b}`; }
     else if (op === 'mul') { const [ra, rb] = RANGES.mul[d]; a = rnd(...ra); b = rnd(...rb); if (Math.random() < 0.5) [a, b] = [b, a]; ans = a * b; text = `${a} × ${b}`; }
     else { const [ra, rb] = RANGES.div[d]; b = rnd(...ra); ans = rnd(...rb); a = b * ans; text = `${a} ÷ ${b}`; }
-    return { id: ++G.qid, text, ans, options: makeOptions(ans, op, a, b) };
+    return { id: ++qid, text, ans, options: makeOptions(ans, op, a, b) };
   }
   function makeOptions(ans, op, a, b) {
     const c = [ans + 1, ans - 1, ans + 2, ans - 2, ans + 10, ans - 10];
@@ -145,11 +102,39 @@
       beep(hi) { tone(hi ? 880 : 560, hi ? 0.45 : 0.16, 'square', 0.07); if (hi) tone(1320, 0.35, 'triangle', 0.08, 0.05); },
       win() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.28, 'triangle', 0.14, i * 0.1)); },
       tie() { tone(440, 0.3, 'triangle', 0.12); tone(440, 0.3, 'triangle', 0.12, 0.32); },
+      coin() { tone(988, 0.08, 'square', 0.06); tone(1319, 0.22, 'square', 0.06, 0.08); },
+      rankUp() { [523, 784, 1047, 1568].forEach((f, i) => tone(f, 0.4, 'triangle', 0.13, i * 0.13)); },
+      click() { tone(700, 0.05, 'triangle', 0.05); },
       toggle() { muted = !muted; return muted; },
+      get muted() { return muted; },
     };
   })();
 
-  /* ---------- presentation: what both screens show and play ---------- */
+  /* ---------- panels ---------- */
+  const ui = {};
+  for (const k of ['L', 'R']) {
+    ui[k] = { panel: $('panel' + k), play: $('play' + k), q: $('q' + k), wrap: $('ans' + k), msg: $('msg' + k), pow: $('pow' + k),
+      pulls: $('pulls' + k), streak: $('streak' + k), name: $('name' + k), roster: $('roster' + k), btns: [] };
+    for (let i = 0; i < 4; i++) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'ans'; b.id = `ans${k}${i}`;
+      b.innerHTML = `<span class="key">${KEY_LABEL[k][i]}</span><span class="val">–</span>`;
+      b.addEventListener('pointerdown', e => { if (e.button > 0) return; e.preventDefault(); tapAnswer(k, i); });
+      b.addEventListener('click', e => { if (e.detail === 0) tapAnswer(k, i); });   // keyboard activation
+      ui[k].wrap.appendChild(b); ui[k].btns.push(b);
+    }
+  }
+  function tapAnswer(k, i) {
+    const p = M && M.focus[k];
+    if (p && p.local && !p.bot) answer(p, i);
+  }
+  function pressFx(b) { b.classList.add('press'); setTimeout(() => b.classList.remove('press'), 110); }
+  function setMsg(k, text, cls) { const m = ui[k].msg; m.textContent = text; m.className = 'msg' + (cls ? ' ' + cls : ''); }
+  const sidePlayers = k => M.players.filter(p => p.side === k);
+  function teamLabel(k) {
+    const side = sidePlayers(k);
+    return side.length === 1 ? side[0].name : k === 'L' ? 'Red Team' : 'Blue Team';
+  }
   function showQuestion(k, q) {
     const u = ui[k];
     u.q.textContent = q.text;
@@ -162,202 +147,185 @@
     });
     u.panel.classList.remove('locked');
   }
+  function renderRoster(k) {
+    const list = ui[k].roster, side = sidePlayers(k);
+    list.hidden = side.length < 2 && !!M.focus[k];
+    list.innerHTML = '';
+    for (const p of side.slice().sort((a, b) => b.s.correct - a.s.correct)) {
+      const li = document.createElement('li');
+      if (p.local) li.className = 'me';
+      const n = document.createElement('span'); n.className = 'r-name'; n.textContent = p.name;
+      if (p.local && M.online) n.insertAdjacentHTML('beforeend', ' <i class="tag you">YOU</i>');
+      if (p.bot) n.insertAdjacentHTML('beforeend', ` <i class="tag">${p.left ? 'LEFT · CPU' : 'CPU'}</i>`);
+      const c = document.createElement('b'); c.textContent = p.s.correct;
+      li.append(n, c);
+      list.appendChild(li);
+    }
+    const total = side.reduce((a, p) => a + p.s.correct, 0);
+    ui[k].pulls.textContent = total;
+    const f = M.focus[k];
+    ui[k].streak.textContent = f && f.s.streak >= 2 ? `${f.s.streak} in a row` : '';
+  }
+  function setupPanels() {
+    for (const k of ['L', 'R']) {
+      const side = sidePlayers(k);
+      const mine = side.find(p => p.local);
+      const focus = mine || (!M.online && side.length === 1 ? side[0] : null);
+      M.focus[k] = focus;
+      const u = ui[k];
+      u.play.hidden = !focus;
+      u.name.textContent = teamLabel(k);
+      u.panel.classList.toggle('mine', !!(focus && focus.local && (M.online || M.cfg.kind === 'cpu')));
+      u.panel.classList.toggle('cpu', !!(focus && focus.bot));
+      u.panel.classList.toggle('solo', !focus);
+      u.panel.classList.remove('locked', 'idle');
+      u.q.textContent = '?';
+      u.btns.forEach(b => { b.classList.remove('good', 'bad', 'think', 'press'); b.querySelector('.val').textContent = '–'; b.disabled = !!(focus && focus.bot); });
+      u.pow.style.width = '0%';
+      setMsg(k, focus && focus.bot ? `Computer: ${CPU[focus.level].name}` : DEFAULT_MSG);
+      u.panel.setAttribute('aria-label', `${teamLabel(k)} (${k === 'L' ? 'red' : 'blue'} side)`);
+      renderRoster(k);
+    }
+    const hint = $('keysHint');
+    const same = M.cfg.kind === 'local';
+    hint.innerHTML = same
+      ? '<span><b class="kr">Red</b> <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd> or <kbd>1</kbd>–<kbd>4</kbd></span><span><b class="kb">Blue</b> <kbd>J</kbd><kbd>K</kbd><kbd>L</kbd><kbd>;</kbd> or <kbd>7</kbd>–<kbd>0</kbd></span><span>or tap the answers</span>'
+      : '<span>Answer with <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>, <kbd>J</kbd><kbd>K</kbd><kbd>L</kbd><kbd>;</kbd> or tap</span>';
+  }
+  function sceneTeams() {
+    const labels = M.players.length > 2 || M.online;
+    const order = k => sidePlayers(k).slice().sort((a, b) => (b.local - a.local) || (a.bot - b.bot));
+    const map = p => ({ look: p.look, cos: p.skin, label: labels ? p.name : '', me: p.local && (M.online || M.players.length > 2) });
+    setTeams(order('L').map(map), order('R').map(map));
+    TEAM.L.label = teamLabel('L').toUpperCase();
+    TEAM.R.label = teamLabel('R').toUpperCase();
+  }
+
+  /* ---------- effects ---------- */
   const speedOf = secs => clamp(1 - (secs - 0.9) / 4.5, 0, 1);
   const speedWord = sp => (sp > 0.8 ? 'Lightning pull!' : sp > 0.45 ? 'Strong pull!' : 'Pull!');
-  function pullFx(k, speed, streak) {
+  function pullFx(k, speed, streak, big) {
     const dir = k === 'L' ? -1 : 1;
     const imp = 0.6 + speed * 0.4;
     if (k === 'L') S.pullL = Math.max(S.pullL, imp); else S.pullR = Math.max(S.pullR, imp);
-    S.shake = Math.max(S.shake, speed * 0.25);
-    const x = VW / 2 + S.pos * RANGE + dir * 200;
-    popText(x, 246, speed > 0.8 ? 'HEAVE!' : speed > 0.45 ? 'PULL!' : 'tug', k === 'L' ? '#ff6a5e' : '#6fb0ff', 22 + speed * 12);
-    if (streak >= 3) popText(x, 214, `${streak} in a row`, '#ffd23f', 17);
-  }
-  // echo = the guest already showed its own result the moment it answered
-  function presentHit(k, i, d, echo) {
-    const u = ui[k];
-    if (!echo) { u.btns[i].classList.add('good'); Sfx.correct(d.speed); }
-    setMsg(k, `${speedWord(d.speed)} ${Number(d.secs).toFixed(1)} s`, 'hot');
-    u.pow.style.width = Math.round(clamp(d.power / 0.18, 0.15, 1) * 100) + '%';
-    pullFx(k, d.speed, d.streak);
-    setStats(k, d.correct, d.streak);
-  }
-  function presentMiss(k, i, d, echo) {
-    const u = ui[k];
-    if (!echo) { u.btns[i].classList.add('bad'); Sfx.wrong(); }
-    u.panel.classList.add('locked');
-    if (k === 'L') S.flinchL = 1; else S.flinchR = 1;
-    setMsg(k, `Slipped! ${d.text} = ${d.ans}`, 'oops');
-    u.pow.style.width = '0%';
-    setStats(k, d.correct, 0);
+    S.shake = Math.max(S.shake, speed * (big ? 0.25 : 0.12));
+    const x = VW / 2 + S.pos * RANGE + dir * (170 + Math.random() * 60);
+    if (big) popText(x, 246, speed > 0.8 ? 'HEAVE!' : speed > 0.45 ? 'PULL!' : 'tug', k === 'L' ? '#ff6a5e' : '#6fb0ff', 22 + speed * 12);
+    else popText(x, 230 + Math.random() * 30, '+1', k === 'L' ? '#ff8a80' : '#8cc2ff', 17);
+    if (streak >= 3 && big) popText(x, 214, `${streak} in a row`, '#ffd23f', 17);
   }
 
-  /* ---------- rules: run on same-PC, vs-computer, and by the online host ---------- */
-  function nextQuestion(k) {
-    const s = G.sides[k];
-    let q, guard = 0;
-    do { q = buildQuestion(); } while (s.q && q.text === s.q.text && guard++ < 10);
-    s.q = q; s.qStart = performance.now(); s.lockUntil = 0;
-    showQuestion(k, q);
-    broadcast({ t: 'q', k, q });
-    if (isCpu(k)) scheduleCpu();
+  /* ---------- stats ---------- */
+  const makeStats = () => ({ q: null, qStart: 0, lockUntil: 0, streak: 0, best: 0, correct: 0, wrong: 0, fastest: Infinity, timeSum: 0 });
+  const pack = s => ({ c: s.correct, w: s.wrong, b: s.best, s: s.streak, f: s.fastest === Infinity ? null : s.fastest, t: s.timeSum });
+  function unpack(s, st) {
+    if (!st) return;
+    const n = v => Math.max(0, Math.min(10000, Number(v) || 0));
+    s.correct = n(st.c) | 0; s.wrong = n(st.w) | 0; s.best = n(st.b) | 0; s.streak = n(st.s) | 0;
+    s.fastest = typeof st.f === 'number' && st.f > 0 ? st.f : Infinity; s.timeSum = n(st.t);
   }
-  function judge(k, i, secs) {
-    const s = G.sides[k], now = performance.now();
-    const dir = k === 'L' ? -1 : 1;
-    if (s.q.options[i] === s.q.ans) {
+
+  /* ---------- rules ---------- */
+  function nextQuestion(p) {
+    const s = p.s;
+    let q, guard = 0;
+    do { q = buildQuestion(M.settings.op, p.diff || M.settings.diff); } while (s.q && q.text === s.q.text && guard++ < 10);
+    s.q = q; s.qStart = performance.now(); s.lockUntil = 0;
+    if (M.focus[p.side] === p) showQuestion(p.side, q);
+    if (p.bot) scheduleBot(p);
+  }
+  function answer(p, i) {
+    if (!M || M.state !== 'play') return;
+    const s = p.s, now = performance.now();
+    if (!s.q || now < s.lockUntil) return;
+    resolve(p, i, s.q.options[i] === s.q.ans, (now - s.qStart) / 1000);
+  }
+  // one answer by a local player or a computer player: update stats, move the rope, tell the room
+  function resolve(p, i, ok, secs) {
+    const s = p.s, n = sidePlayers(p.side).length;
+    let ev;
+    if (ok) {
       s.correct++; s.streak++;
       s.best = Math.max(s.best, s.streak);
       s.fastest = Math.min(s.fastest, secs);
       s.timeSum += secs;
       const speed = speedOf(secs);
-      const power = 0.065 + 0.075 * speed + Math.min(s.streak - 1, 5) * 0.008;
-      S.target = clamp(S.target + dir * power, -1.25, 1.25);
-      const d = { secs, speed, power, streak: s.streak, correct: s.correct, target: S.target };
-      s.lockUntil = now + 220;
-      presentHit(k, i, d, false);
-      broadcast({ t: 'hit', k, i, d });
-      later(() => { if (G.state === 'play') nextQuestion(k); }, 220);
+      const power = (0.065 + 0.075 * speed + Math.min(s.streak - 1, 5) * 0.008) / n;
+      ev = { t: 'pull', pid: p.id, ok: true, i, secs: Math.round(secs * 100) / 100, speed, power, st: pack(s) };
+      s.lockUntil = performance.now() + 220;
+      later(() => { if (M.state === 'play') nextQuestion(p); }, 220);
     } else {
       s.wrong++; s.streak = 0;
-      S.target = clamp(S.target - dir * 0.035, -1.25, 1.25);
-      const d = { text: s.q.text, ans: s.q.ans, correct: s.correct, target: S.target };
-      s.lockUntil = now + 1000;
-      presentMiss(k, i, d, false);
-      broadcast({ t: 'miss', k, i, d });
-      later(() => { if (G.state === 'play') nextQuestion(k); }, 1000);
+      ev = { t: 'pull', pid: p.id, ok: false, i, power: 0.035 / n, text: s.q.text, ans: s.q.ans, st: pack(s) };
+      s.lockUntil = performance.now() + 1000;
+      later(() => { if (M.state === 'play') nextQuestion(p); }, 1000);
     }
+    applyPull(ev, true);
+    if (M.online) Net.send(ev);
   }
-  function answer(k, i, source) {
-    if (G.state !== 'play') return;
-    if (isCpu(k) && source !== 'cpu') return;
-    if (isRemote(k)) return;
-    const s = G.sides[k], now = performance.now();
-    if (!s.q || now < s.lockUntil) return;
-    const secs = (now - s.qStart) / 1000;
-    if (isGuest()) {
-      // show the result right away; the host confirms it and moves the rope
-      const ok = s.q.options[i] === s.q.ans;
-      s.lockUntil = now + (ok ? 5000 : 1000);
-      ui[k].btns[i].classList.add(ok ? 'good' : 'bad');
-      if (ok) Sfx.correct(speedOf(secs));
-      else { Sfx.wrong(); ui[k].panel.classList.add('locked'); }
-      Net.send({ t: 'ans', qid: s.q.id, i, secs });
-      return;
+  // own = this device made the move; the host (or offline device) owns the rope
+  function applyPull(ev, own) {
+    const p = M.byId.get(ev.pid);
+    if (!p) return;
+    if (!own) unpack(p.s, ev.st);
+    const k = p.side, dir = k === 'L' ? -1 : 1, n = sidePlayers(k).length;
+    const power = clamp(Number(ev.power) || 0, 0, 0.21 / n);
+    if (M.host || own) S.target = clamp(S.target + (ev.ok ? dir : -dir) * power, -1.25, 1.25);
+    const focus = M.focus[k] === p;
+    const loud = p.local || (focus && !M.online);
+    if (ev.ok) {
+      const speed = clamp(Number(ev.speed) || 0, 0, 1);
+      pullFx(k, speed, p.s.streak, focus || n === 1);
+      if (focus) {
+        const u = ui[k];
+        if (ev.i >= 0 && ev.i < 4) u.btns[ev.i].classList.add('good');
+        setMsg(k, `${speedWord(speed)} ${Number(ev.secs).toFixed(1)} s`, 'hot');
+        u.pow.style.width = Math.round(clamp(power * n / 0.18, 0.15, 1) * 100) + '%';
+      }
+      if (loud) Sfx.correct(speed);
+    } else {
+      if (k === 'L') S.flinchL = Math.max(S.flinchL, 1 / n); else S.flinchR = Math.max(S.flinchR, 1 / n);
+      if (focus) {
+        const u = ui[k];
+        if (ev.i >= 0 && ev.i < 4) u.btns[ev.i].classList.add('bad');
+        u.panel.classList.add('locked');
+        setMsg(k, `Slipped! ${ev.text} = ${ev.ans}`, 'oops');
+        u.pow.style.width = '0%';
+      }
+      if (loud) Sfx.wrong();
     }
-    judge(k, i, secs);
-  }
-  function remoteAnswer(m) {
-    const s = G.sides.R, i = m.i | 0;
-    if (G.state !== 'play' || !s.q || s.q.id !== m.qid || i < 0 || i > 3) return;
-    if (performance.now() < s.lockUntil) return;
-    judge('R', i, clamp(Number(m.secs) || 0, 0.25, 120));
+    renderRoster(k);
   }
 
-  /* ---------- computer player ---------- */
-  function scheduleCpu() {
-    G.cpuIds.forEach(id => { clearTimeout(id); G.timers.delete(id); });
-    const c = CPU[settings.cpu];
-    const f = { easy: 1, medium: 1.2, hard: 1.45 }[settings.diff];
+  /* ---------- computer players (run by the host) ---------- */
+  function scheduleBot(p) {
+    const c = CPU[p.level] || CPU.medium;
+    const f = { easy: 1, medium: 1.2, hard: 1.45 }[p.diff || M.settings.diff] || 1;
     const delay = (c.min + Math.random() * (c.max - c.min)) * f * 1000;
-    const s = G.sides.R, btns = ui.R.btns;
-    let pick = s.q.options.indexOf(s.q.ans);
+    let pick = p.s.q.options.indexOf(p.s.q.ans);
     if (Math.random() > c.acc) { const w = [0, 1, 2, 3].filter(i => i !== pick); pick = w[rnd(0, 2)]; }
-    const clear = () => btns.forEach(b => b.classList.remove('think'));
-    G.cpuIds = [
-      later(() => { clear(); btns[rnd(0, 3)].classList.add('think'); }, delay * 0.45),
-      later(() => { clear(); btns[pick].classList.add('think'); }, delay * 0.8),
-      later(() => { clear(); if (G.state === 'play') { pressFx(btns[pick]); answer('R', pick, 'cpu'); } }, delay),
-    ];
+    const q = p.s.q;
+    if (M.focus[p.side] === p) {
+      const btns = ui[p.side].btns;
+      const clear = () => btns.forEach(b => b.classList.remove('think'));
+      later(() => { clear(); btns[rnd(0, 3)].classList.add('think'); }, delay * 0.45);
+      later(() => { clear(); btns[pick].classList.add('think'); }, delay * 0.8);
+      later(() => { clear(); pressFx(btns[pick]); }, delay - 10);
+    }
+    later(() => { if (M.state === 'play' && p.s.q === q) resolve(p, pick, pick === q.options.indexOf(q.ans), delay / 1000); }, delay);
   }
 
-  /* ---------- settings + names ---------- */
-  const radio = n => document.querySelector(`input[name="${n}"]:checked`).value;
-  function menuSettings() { return { op: radio('op'), diff: radio('diff'), time: +radio('time') }; }
-  function showSettings(p) {
-    for (const [name, v] of [['op', p.op], ['diff', p.diff], ['time', p.time]]) {
-      const el = document.getElementById(`${name}-${v}`);
-      if (el) el.checked = true;
-    }
-  }
-  function readSettings() {
-    settings.mode = radio('mode');
-    settings.cpu = radio('cpu');
-    Object.assign(settings, menuSettings());
-    const me = clean($('nameInL').value);
-    if (isHost()) settings.names = { L: me, R: G.oppName };
-    else if (isGuest()) settings.names = { L: G.oppName, R: me };
-    else settings.names = { L: me, R: settings.mode === 'cpu' ? '' : clean($('nameInR').value) };
-    try { localStorage.setItem(NAMES_KEY, JSON.stringify({ L: $('nameInL').value, R: $('nameInR').value })); } catch (e) { /* storage blocked */ }
-  }
-  function loadNames() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(NAMES_KEY) || 'null');
-      if (saved) { $('nameInL').value = saved.L || ''; $('nameInR').value = saved.R || ''; }
-    } catch (e) { /* storage blocked or bad data */ }
-  }
-  function applyRemoteSettings(p) {
-    const ok = (v, list) => list.includes(v);
-    if (ok(p.op, ['add', 'sub', 'mul', 'div', 'mix'])) settings.op = p.op;
-    if (ok(p.diff, ['easy', 'medium', 'hard'])) settings.diff = p.diff;
-    if (ok(+p.time, [0, 60, 90])) settings.time = +p.time;
-    if (p.names) settings.names = { L: clean(p.names.L), R: clean(p.names.R) };
-  }
-  function applyNames() {
-    ui.L.name.textContent = teamName('L');
-    ui.R.name.textContent = teamName('R');
-    $('resNameL').textContent = teamName('L');
-    $('resNameR').textContent = teamName('R');
-    TEAM.L.label = teamName('L').toUpperCase();
-    TEAM.R.label = teamName('R').toUpperCase();
-    for (const k of ['L', 'R']) {
-      ui[k].panel.classList.toggle('cpu', isCpu(k));
-      ui[k].panel.classList.toggle('mine', online() && k === mySide());
-      ui[k].panel.classList.toggle('remote', isRemote(k));
-    }
-    ui.L.panel.setAttribute('aria-label', teamName('L') + ' (red side)');
-    ui.R.panel.setAttribute('aria-label', teamName('R') + ' (blue side)');
-  }
-
-  /* ---------- round flow ---------- */
+  /* ---------- clock ---------- */
   function fmt(sec) { sec = Math.max(0, Math.ceil(sec)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; }
   function renderTimer(force) {
-    const t = $('timer');
-    const sec = settings.time > 0 ? Math.ceil(G.timeLeft) : Math.floor(G.elapsed);
-    if (sec === G.shownSec && !force) return;
-    G.shownSec = sec;
+    const t = $('timer'), time = M.settings.time;
+    const sec = time > 0 ? Math.ceil(M.timeLeft) : Math.floor(M.elapsed);
+    if (sec === M.shownSec && !force) return;
+    M.shownSec = sec;
     t.textContent = fmt(sec);
-    t.classList.toggle('hurry', settings.time > 0 && G.state === 'play' && sec <= 10 && sec > 0);
-  }
-  function resetRound() {
-    clearTimers();
-    G.sides = { L: makeSide('L'), R: makeSide('R') };
-    G.timeLeft = settings.time; G.elapsed = 0; G.shownSec = -1; G.syncT = 0;
-    Object.assign(S, { pos: 0, target: 0, vel: 0, pullL: 0, pullR: 0, flinchL: 0, flinchR: 0, winner: 0, winT: 0, shake: 0 });
-    resetLanded();
-    parts.length = 0;
-    for (const k of ['L', 'R']) {
-      const u = ui[k];
-      u.q.textContent = '?';
-      u.btns.forEach(b => { b.classList.remove('good', 'bad', 'think', 'press'); b.querySelector('.val').textContent = '–'; });
-      u.panel.classList.remove('locked', 'idle');
-      u.pow.style.width = '0%';
-      setMsg(k, isCpu(k) ? `Computer: ${CPU[settings.cpu].name}` : isRemote(k) ? 'Playing on another device' : DEFAULT_MSG);
-      setStats(k, 0, 0);
-    }
-    renderTimer(true);
-  }
-  function beginRound() {
-    Sfx.ensure();
-    applyNames();
-    resetRound();
-    $('menu').hidden = true; $('result').hidden = true;
-    closeBoard(false);        // an online guest may still be looking at it when the host starts
-    refreshMenu();
+    t.classList.toggle('hurry', time > 0 && M.state === 'play' && sec <= 10 && sec > 0);
   }
   function runCountdown(onGo) {
-    G.state = 'ready'; S.mode = 'ready';
-    refreshMenu();
     const count = $('count');
     count.hidden = false;
     ['3', '2', '1', 'PULL!'].forEach((w, i) => later(() => {
@@ -371,34 +339,51 @@
     }, i * 700));
     later(() => { count.hidden = true; }, 2800);
   }
-  function startGame() {
-    if (isGuest()) return;
-    if (online() && !Net.connected) { setNetStatus('Wait for a friend to join before starting.', 'err'); return; }
-    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    readSettings();
-    beginRound();
-    broadcast({ t: 'start', s: { ...menuSettings(), names: settings.names } });
-    runCountdown(beginPlay);
+
+  /* ---------- match flow ---------- */
+  /* cfg: { mode: classic|ranked|custom, kind: local|cpu|online, host, me, settings: {op, diff, time},
+            players: [{ id, name, side, bot, level, skin, look, diff }] } */
+  function start(cfg) {
+    stop();
+    const online = cfg.kind === 'online';
+    const players = cfg.players.map(p => Object.assign({}, p, {
+      s: makeStats(),
+      local: !p.bot && (online ? p.id === cfg.me : true),
+    }));
+    M = {
+      cfg, online, host: !!cfg.host, me: cfg.me, settings: cfg.settings, players,
+      byId: new Map(players.map(p => [p.id, p])), focus: { L: null, R: null },
+      state: 'ready', timeLeft: cfg.settings.time, elapsed: 0, shownSec: -1, syncT: 0, timers: new Set(),
+    };
+    Object.assign(S, { pos: 0, target: 0, vel: 0, pullL: 0, pullR: 0, flinchL: 0, flinchR: 0, winner: 0, winT: 0, shake: 0, mode: 'ready' });
+    parts.length = 0;
+    sceneTeams();
+    setupPanels();
+    renderTimer(true);
+    Sfx.ensure();
+    runCountdown(() => {
+      M.state = 'play'; S.mode = 'play';
+      for (const p of M.players) if (p.local || (M.host && p.bot)) nextQuestion(p);
+    });
   }
-  function beginPlay() {
-    G.state = 'play'; S.mode = 'play';
-    nextQuestion('L'); nextQuestion('R');
+  function stop() {
+    clearTimers();
+    M = null;
+    S.mode = 'menu'; S.winner = 0; S.target = 0;
+    $('count').hidden = true;
   }
-  function guestPlay() {
-    if (G.state === 'ready') { G.state = 'play'; S.mode = 'play'; }
-  }
-  const packSide = s => ({ correct: s.correct, wrong: s.wrong, best: s.best, timeSum: s.timeSum, fastest: s.fastest === Infinity ? null : s.fastest });
-  const unpackSide = (k, p) => Object.assign(makeSide(k), p || {}, { fastest: p && typeof p.fastest === 'number' ? p.fastest : Infinity });
-  function endGame(w, why) {
-    if (G.state !== 'play') return;
-    broadcast({ t: 'end', w, why, elapsed: G.elapsed, stats: { L: packSide(G.sides.L), R: packSide(G.sides.R) } });
+  function endMatch(w, why) {
+    if (M.state !== 'play') return;
+    const stats = {};
+    for (const p of M.players) stats[p.id] = pack(p.s);
+    if (M.online) Net.send({ t: 'end', w, why, elapsed: M.elapsed, stats });
     presentEnd(w, why);
   }
   function presentEnd(w, why) {
-    G.state = 'over'; S.mode = 'over'; S.winner = w; S.winT = 0;
+    M.state = 'over'; S.mode = 'over'; S.winner = w; S.winT = 0;
     clearTimers();
     $('count').hidden = true;
-    for (const k of ['L', 'R']) { ui[k].panel.classList.add('idle'); ui[k].btns.forEach(b => b.classList.remove('think')); }
+    for (const k of ['L', 'R']) { ui[k].panel.classList.add('idle'); ui[k].btns.forEach(b => b.classList.remove('think')); renderRoster(k); }
     renderTimer(true);
     if (w) {
       S.target = w * 1.12;
@@ -407,441 +392,105 @@
       confettiBurst(120);
       later(() => confettiBurst(80), 700);
       const k = w < 0 ? 'L' : 'R';
-      setMsg(k, !online() || k === mySide() ? 'You win!' : 'Winner!', 'hot');
-      setMsg(k === 'L' ? 'R' : 'L', 'Pulled over the line');
+      if (M.focus[k]) setMsg(k, M.focus[k].local ? 'You win!' : 'Winner!', 'hot');
+      if (M.focus[k === 'L' ? 'R' : 'L']) setMsg(k === 'L' ? 'R' : 'L', 'Pulled over the line');
     } else {
       S.target = S.pos;
       Sfx.tie();
     }
-    refreshMenu();
-    saveResult(w);
-    later(() => showResult(w, why), 1900);
+    const m = M;
+    later(() => handlers.end({
+      w, why, elapsed: m.elapsed, cfg: m.cfg, settings: m.settings,
+      players: m.players.map(p => ({ id: p.id, name: p.name, side: p.side, bot: !!p.bot, left: !!p.left, local: p.local, diff: p.diff,
+        level: p.level, stats: { correct: p.s.correct, wrong: p.s.wrong, best: p.s.best, fastest: p.s.fastest, timeSum: p.s.timeSum } })),
+    }), 1900);
   }
-  function showResult(w, why) {
-    const title = $('resTitle');
-    const winner = w < 0 ? teamName('L') : w > 0 ? teamName('R') : '';
-    title.className = 'res-title' + (w < 0 ? ' red' : w > 0 ? ' blue' : '');
-    title.textContent = w ? `${winner} wins!` : 'Dead heat!';
-    const opName = { add: 'Adding', sub: 'Subtracting', mul: 'Times tables', div: 'Dividing', mix: 'Mixed' }[settings.op];
-    const lvl = settings.diff[0].toUpperCase() + settings.diff.slice(1);
-    const modeName = online() ? (Net.via === 'lan' ? 'LAN game' : 'Online game') : settings.mode === 'cpu' ? 'Vs computer' : 'Same PC';
-    $('resEyebrow').textContent = `${modeName} · ${opName} · ${lvl}`;
-    $('resSub').textContent = why === 'line'
-      ? `Dragged the ribbon over the line in ${fmt(G.elapsed)}.`
-      : w ? `Time's up. ${winner} held more of the rope.` : `Time's up with the ribbon dead centre.`;
 
-    const L = G.sides.L, R = G.sides.R;
-    const rows = [
-      ['Right answers', s => s.correct, 'hi', v => v],
-      ['Slips', s => s.wrong, 'lo', v => v],
-      ['Best streak', s => s.best, 'hi', v => v],
-      ['Fastest answer', s => (s.fastest === Infinity ? null : s.fastest), 'lo', v => v.toFixed(2) + ' s'],
-      ['Average answer', s => (s.correct ? s.timeSum / s.correct : null), 'lo', v => v.toFixed(2) + ' s'],
-    ];
-    const body = $('resBody');
-    body.innerHTML = '';
-    for (const [label, get, better, show] of rows) {
-      const a = get(L), b = get(R);
-      const tr = document.createElement('tr');
-      const th = document.createElement('td'); th.textContent = label; tr.appendChild(th);
-      for (const [v, o] of [[a, b], [b, a]]) {
-        const td = document.createElement('td');
-        td.textContent = v === null ? '—' : show(v);
-        if (v !== null && o !== null && v !== o && (better === 'hi' ? v > o : v < o)) td.className = 'win';
-        if (v !== null && o === null) td.className = 'win';
-        tr.appendChild(td);
+  // called every frame by app.js
+  function tick(dt) {
+    if (!M || M.state !== 'play') return;
+    M.elapsed += dt;
+    if (M.settings.time > 0) M.timeLeft = Math.max(0, M.timeLeft - dt);
+    renderTimer();
+    if (M.host) {
+      if (S.pos <= -1) endMatch(-1, 'line');
+      else if (S.pos >= 1) endMatch(1, 'line');
+      else if (M.settings.time > 0 && M.timeLeft <= 0) endMatch(Math.abs(S.pos) < 0.02 ? 0 : Math.sign(S.pos), 'time');
+      if (M && M.online && M.state === 'play' && (M.syncT += dt) >= 0.25) {
+        M.syncT = 0;
+        Net.send({ t: 'sync', target: S.target, pos: S.pos, timeLeft: M.timeLeft, elapsed: M.elapsed });
       }
-      body.appendChild(tr);
-    }
-    const again = $('againBtn');
-    again.disabled = isGuest();
-    again.textContent = isGuest() ? 'Host starts the rematch' : 'Rematch';
-    $('setBtn').textContent = isGuest() ? 'Back to menu' : 'Change settings';
-    $('result').hidden = false;
-    if (!isGuest()) again.focus({ preventScroll: true });
-  }
-  function openMenu(fromHost) {
-    clearTimers();
-    G.state = 'menu'; S.mode = 'menu'; S.winner = 0; S.target = 0;
-    $('count').hidden = true;
-    $('result').hidden = true;
-    $('menu').hidden = false;
-    previewPanels();
-    broadcast({ t: 'menu' });
-    refreshMenu();
-    if (!fromHost) $('startBtn').focus({ preventScroll: true });
-  }
-  function previewPanels() {
-    for (const k of ['L', 'R']) {
-      showQuestion(k, buildQuestion());
-      ui[k].panel.classList.add('idle');
     }
   }
 
-  /* ---------- saved results: vs computer and internet games go on the leaderboard ---------- */
-  function saveResult(w) {
-    const note = $('resSaved'), text = $('resSavedText');
-    note.hidden = !DB.configured || !(settings.mode === 'cpu' || (online() && Net.via === 'supa'));
-    if (note.hidden) return;
-    note.className = 'res-saved';
-    text.textContent = 'Saving to the leaderboard…';
-    const k = mySide(), s = G.sides[k];
-    DB.saveResult({
-      p_mode: settings.mode, p_op: settings.op, p_diff: settings.diff, p_round_secs: settings.time,
-      p_cpu_level: settings.mode === 'cpu' ? settings.cpu : null,
-      p_outcome: !w ? 'draw' : (w < 0) === (k === 'L') ? 'win' : 'loss',
-      p_correct: s.correct, p_wrong: s.wrong, p_best_streak: s.best,
-      p_fastest_ms: s.fastest === Infinity ? null : Math.round(s.fastest * 1000),
-      p_elapsed_secs: Math.round(G.elapsed * 100) / 100,
-    }, clean($('nameInL').value)).then(ok => {
-      note.className = 'res-saved' + (ok ? ' ok' : '');
-      text.textContent = ok ? 'Saved to your stats.' : 'This round could not be saved.';
-    });
-  }
-
-  /* ---------- leaderboard ---------- */
-  const BOARD_COL = {
-    wins: ['Wins', p => p.wins],
-    streak: ['Best streak', p => p.best_streak],
-    answers: ['Right answers', p => p.total_correct],
-    fastest: ['Fastest', p => (p.fastest_ms / 1000).toFixed(2) + ' s'],
-  };
-  let boardReq = 0, boardReturn = null;
-  function openBoard() {
-    boardReturn = document.activeElement;
-    $('board').hidden = false;
-    document.querySelector('input[name="board"]:checked').focus({ preventScroll: true });
-    loadBoard();
-  }
-  function closeBoard(restoreFocus = true) {
-    if ($('board').hidden) return;
-    $('board').hidden = true;
-    boardReq++;
-    if (restoreFocus && boardReturn && boardReturn.focus) boardReturn.focus({ preventScroll: true });
-    boardReturn = null;
-  }
-  async function loadBoard() {
-    const req = ++boardReq, board = radio('board');
-    const [label, value] = BOARD_COL[board];
-    const note = $('boardNote');
-    note.className = 'board-note';
-    note.textContent = 'Loading…';
-    $('boardCol').textContent = label;
-    let res;
-    try { res = await DB.leaderboard(board); }
-    catch (e) {
-      if (req !== boardReq) return;
-      $('boardTable').hidden = true;
-      note.className = 'board-note err';
-      note.textContent = 'Could not load the leaderboard. Check the internet connection.';
-      return;
-    }
-    if (req !== boardReq) return;         // a newer tab was picked, or the board was closed
-    const body = $('boardBody');
-    body.innerHTML = '';
-    res.rows.forEach((p, i) => {
-      const tr = document.createElement('tr');
-      if (res.me && p.id === res.me.id) tr.className = 'me';
-      for (const v of [i + 1, p.display_name, value(p), p.games_played]) {
-        const td = document.createElement('td');
-        td.textContent = v;
-        tr.appendChild(td);
-      }
-      body.appendChild(tr);
-    });
-    $('boardTable').hidden = !res.rows.length;
-    const me = res.me && res.me.games_played ? res.me : null;
-    note.textContent = me
-      ? `You: ${me.wins} win${me.wins === 1 ? '' : 's'} in ${me.games_played} game${me.games_played === 1 ? '' : 's'} · best streak ${me.best_streak}.`
-      : res.rows.length
-        ? 'Play vs the computer or online to get on the board.'
-        : 'No scores yet. Play vs the computer or online to get on the board.';
-  }
-
-  /* ---------- menu attract mode: the teams tug on their own ---------- */
-  let attractT = 0.5;
-  function attract(dt) {
-    attractT -= dt;
-    if (attractT > 0) return;
-    attractT = 0.7 + Math.random() * 0.9;
-    let k = Math.random() < 0.5 ? 'L' : 'R';
-    if (S.target > 0.3) k = 'L'; else if (S.target < -0.3) k = 'R';
-    S.target += (k === 'L' ? -1 : 1) * 0.12 * (0.6 + Math.random() * 0.6);
-    if (k === 'L') S.pullL = 0.85; else S.pullR = 0.85;
-  }
-
-  /* ---------- menu state ---------- */
-  function setNetStatus(text, cls) {
-    const el = $('netStatus');
-    el.textContent = text;
-    el.className = 'net-status' + (cls ? ' ' + cls : '');
-  }
-  function refreshMenu() {
-    const mode = settings.mode, on = mode === 'online', cpu = mode === 'cpu';
-    $('cpuField').hidden = !cpu;
-    $('netField').hidden = !on;
-    $('nameInR').hidden = cpu || on;
-    $('nameGrid').classList.toggle('solo', cpu || on);
-    $('nameLabel').textContent = cpu || on ? 'Your name' : 'Names';
-    const nameIn = $('nameInL');
-    nameIn.placeholder = isGuest() ? 'Blue Team' : 'Red Team';
-    nameIn.classList.toggle('red', !isGuest());
-    nameIn.classList.toggle('blue', isGuest());
-
-    const inRoom = on && !!Net.role;
-    const seeking = Net.role === 'seeker' || Net.role === 'matching';
-    $('netIdle').hidden = inRoom;
-    $('netRoom').hidden = !inRoom;
-    $('quickBtn').hidden = Net.via !== 'supa';
-    $('netCodeLabel').textContent = seeking ? 'Quick match' : 'Room';
-    $('netCode').hidden = seeking;
-    $('netCode').textContent = Net.code || '-----';
-    $('copyBtn').hidden = !isHost() || Net.quick;
-    $('leaveBtn').textContent = seeking ? 'Cancel' : 'Leave';
-    $('hostSettings').disabled = isGuest();
-
-    const start = $('startBtn');
-    if (on && isGuest()) { start.disabled = true; start.textContent = Net.connected ? 'Waiting for the host…' : 'Joining…'; }
-    else if (on) { start.disabled = !Net.connected; start.textContent = Net.connected ? 'Start the tug' : 'Waiting for a friend…'; }
-    else { start.disabled = false; start.textContent = 'Start the tug'; }
-    $('menuFine').textContent = on
-      ? 'Answer with A S D F, J K L ; or by tapping. The host starts each round.'
-      : 'Red: A S D F · Blue: J K L ; · or tap. Enter starts.';
-    $('menuBtn').disabled = isGuest() && (G.state === 'ready' || G.state === 'play');
-  }
-  function syncMode() {
-    settings.mode = radio('mode');
-    if (!online() && Net.role) { Net.leave(); G.oppName = ''; setNetStatus(NET_HINT); }
-    applyNames();
-    refreshMenu();
-  }
-  function partnerGone() {
-    if (G.state !== 'menu') openMenu(true);
-    applyNames();
-  }
-
-  /* ---------- online: connection events ---------- */
-  Net.on('status', (kind, text) => {
-    if (kind === 'connecting') { setNetStatus(text); Net.detect().then(showVia); }
-    else if (kind === 'searching') setNetStatus(text);
-    else if (kind === 'waiting') {
-      G.oppName = '';
-      setNetStatus(text === 'left'
-        ? 'Your friend left. Share the code again or wait for someone to join…'
-        : 'Share the room code with your friend. Waiting for them to join…');
-      if (text === 'left') partnerGone();
-    } else if (kind === 'connected') {
-      setNetStatus(isHost() ? 'Friend connected…' : 'Connected! Waiting for the host…', 'ok');
-      Net.send({ t: 'hello', name: clean($('nameInL').value) });
-    } else if (kind === 'closed' || kind === 'error') {
-      G.oppName = '';
-      setNetStatus(text, 'err');
-      partnerGone();
-    }
-    refreshMenu();
-  });
-
-  Net.on('message', m => {
-    if (!online()) return;
-    const host = isHost(), guest = isGuest();
+  /* ---------- online messages during a match ---------- */
+  function onNet(m, from) {
+    if (!M || !M.online) return;
+    const hostId = Net.hostId;
     switch (m.t) {
-      case 'hello':
-        G.oppName = clean(m.name);
-        if (host) {
-          setNetStatus(`${G.oppName || 'Your friend'} joined. Pick the settings and start.`, 'ok');
-          Net.send({ t: 'settings', s: menuSettings() });
-        } else if (guest) {
-          setNetStatus(`Joined ${G.oppName ? G.oppName + '’s' : 'the'} game. Waiting for the host to start.`, 'ok');
-        }
+      case 'pull': {
+        if (M.state !== 'play') return;
+        const p = M.byId.get(m.pid);
+        if (!p || p.local) return;
+        if (p.bot ? from !== hostId : from !== p.id) return;     // only you move your player; the host moves computers
+        applyPull(m, false);
         break;
-      case 'settings':
-        if (guest && m.s) showSettings(m.s);
-        break;
-      case 'start':
-        if (guest && m.s) {
-          showSettings(m.s);
-          applyRemoteSettings(m.s);
-          beginRound();
-          runCountdown(guestPlay);
-        }
-        break;
-      case 'q':
-        if (guest && (m.k === 'L' || m.k === 'R') && m.q && Array.isArray(m.q.options) && G.state !== 'menu') {
-          const s = G.sides[m.k];
-          s.q = m.q; s.qStart = performance.now(); s.lockUntil = 0;
-          showQuestion(m.k, m.q);
-          guestPlay();
-        }
-        break;
-      case 'hit':
-      case 'miss':
-        if (guest && (m.k === 'L' || m.k === 'R') && m.d && (G.state === 'play' || G.state === 'ready')) {
-          S.target = clamp(Number(m.d.target) || 0, -1.25, 1.25);
-          (m.t === 'hit' ? presentHit : presentMiss)(m.k, m.i | 0, m.d, m.k === mySide());
-        }
-        break;
+      }
       case 'sync':
-        if (guest && G.state === 'play') {
-          S.target = clamp(Number(m.target) || 0, -1.25, 1.25);
-          if (Math.abs(m.pos - S.pos) > 0.03) S.pos += (m.pos - S.pos) * 0.5;
-          G.timeLeft = Number(m.timeLeft) || 0;
-          G.elapsed = Number(m.elapsed) || 0;
-        }
+        if (M.host || from !== hostId || M.state !== 'play') return;
+        S.target = clamp(Number(m.target) || 0, -1.25, 1.25);
+        if (Math.abs(m.pos - S.pos) > 0.03) S.pos += (m.pos - S.pos) * 0.5;
+        M.timeLeft = Number(m.timeLeft) || 0;
+        M.elapsed = Number(m.elapsed) || 0;
         break;
       case 'end':
-        if (guest && (G.state === 'play' || G.state === 'ready') && m.stats) {
-          G.sides.L = unpackSide('L', m.stats.L);
-          G.sides.R = unpackSide('R', m.stats.R);
-          G.elapsed = Number(m.elapsed) || 0;
-          presentEnd(Math.sign(m.w) || 0, m.why === 'line' ? 'line' : 'time');
-        }
+        if (M.host || from !== hostId || M.state === 'over') return;
+        for (const p of M.players) unpack(p.s, m.stats && m.stats[p.id]);
+        M.elapsed = Number(m.elapsed) || 0;
+        presentEnd(Math.sign(m.w) || 0, m.why === 'line' ? 'line' : 'time');
         break;
-      case 'menu':
-        if (guest && G.state !== 'menu') openMenu(true);
+      case 'left': {
+        if (from !== hostId) return;
+        const p = M.byId.get(m.pid);
+        if (p && !p.local) { p.bot = true; p.left = true; renderRoster(p.side); }
         break;
-      case 'ans':
-        if (host) remoteAnswer(m);
-        break;
-      case 'full':
-        if (guest) { Net.leave(); setNetStatus('That game already has two players.', 'err'); refreshMenu(); }
-        break;
+      }
     }
-  });
-
-  function doJoin() {
-    const code = $('joinCode').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    $('joinCode').value = code;
-    if (code.length !== 5) { setNetStatus('Type the 5-character room code.', 'err'); $('joinCode').focus(); return; }
-    Sfx.ensure();
-    Net.join(code);
   }
-  $('hostBtn').addEventListener('click', () => { Sfx.ensure(); Net.host(); });
-  $('quickBtn').addEventListener('click', () => { Sfx.ensure(); Net.quickMatch(); });
-  $('joinBtn').addEventListener('click', doJoin);
-  $('leaveBtn').addEventListener('click', () => { Net.leave(); G.oppName = ''; setNetStatus(NET_HINT); refreshMenu(); });
-  $('copyBtn').addEventListener('click', () => {
-    const link = Net.inviteLink();
-    const done = () => { $('copyBtn').textContent = 'Copied'; setTimeout(() => { $('copyBtn').textContent = 'Copy invite'; }, 1400); };
-    try {
-      navigator.clipboard.writeText(link).then(done, () => setNetStatus(`Invite: ${link}`));
-    } catch (e) { setNetStatus(`Invite: ${link}`); }
-  });
-  let nameTimer = 0;
-  $('nameInL').addEventListener('input', () => {
-    clearTimeout(nameTimer);
-    nameTimer = setTimeout(() => { if (online() && Net.connected) Net.send({ t: 'hello', name: clean($('nameInL').value) }); }, 400);
-  });
-  document.querySelectorAll('#hostSettings input').forEach(r => r.addEventListener('change', () => {
-    if (isHost() && Net.connected) Net.send({ t: 'settings', s: menuSettings() });
-  }));
-  document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', syncMode));
+  // host: a player dropped out mid-match, so a computer takes over their slot
+  function playerLeft(id) {
+    if (!M || !M.host) return;
+    const p = M.byId.get(id);
+    if (!p || p.bot || p.local) return;
+    p.bot = true; p.left = true; p.level = p.level || 'medium';
+    if (M.state === 'play') nextQuestion(p);
+    Net.send({ t: 'left', pid: id });
+    renderRoster(p.side);
+  }
 
-  /* ---------- keyboard ---------- */
-  document.addEventListener('keydown', e => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (!$('board').hidden) { if (e.key === 'Escape') closeBoard(); return; }
-    const active = document.activeElement;
-    const tag = active && active.tagName;
-    if (e.key === 'Enter' && tag !== 'BUTTON') {
-      if (active && active.id === 'joinCode') { e.preventDefault(); doJoin(); return; }
-      if (!$('menu').hidden || !$('result').hidden) { e.preventDefault(); startGame(); return; }
-    }
-    if (e.key === 'Escape' && (G.state === 'play' || G.state === 'ready') && !isGuest()) { openMenu(); return; }
-    if (G.state !== 'play' || e.repeat || tag === 'INPUT') return;
+  /* ---------- keyboard during a match ---------- */
+  function onKey(e) {
+    if (!M || M.state !== 'play' || e.repeat) return false;
     for (const k of ['L', 'R']) {
-      if (e.code in KEYS[k]) {
-        e.preventDefault();
-        const side = online() ? mySide() : k;     // online: every answer key plays your own side
-        if (isCpu(side)) return;
-        const i = KEYS[k][e.code];
-        pressFx(ui[side].btns[i]);
-        answer(side, i, 'key');
-        return;
-      }
+      if (!(e.code in KEYS[k])) continue;
+      const i = KEYS[k][e.code];
+      // Same PC: each key set plays its own side; otherwise every key plays your player
+      const p = M.cfg.kind === 'local' ? M.focus[k] : M.players.find(x => x.local);
+      if (!p || !p.local || p.bot) return true;
+      pressFx(ui[p.side].btns[i]);
+      answer(p, i);
+      return true;
     }
-  });
-  $('startBtn').addEventListener('click', startGame);
-  $('againBtn').addEventListener('click', startGame);
-  $('setBtn').addEventListener('click', () => openMenu());
-  $('menuBtn').addEventListener('click', () => openMenu());
-  $('boardBtn').addEventListener('click', openBoard);
-  $('resBoardBtn').addEventListener('click', openBoard);
-  $('boardClose').addEventListener('click', () => closeBoard());
-  $('board').addEventListener('click', e => { if (e.target === $('board')) closeBoard(); });
-  document.querySelectorAll('input[name="board"]').forEach(r => r.addEventListener('change', loadBoard));
-  $('soundBtn').addEventListener('click', () => {
-    Sfx.ensure();
-    const muted = Sfx.toggle();
-    $('soundBtn').textContent = muted ? 'Sound: Off' : 'Sound: On';
-    $('soundBtn').setAttribute('aria-pressed', String(!muted));
-  });
-
-  /* ---------- main loop ---------- */
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
-    last = now;
-    tick(dt);
-    renderScene(dt);
-    requestAnimationFrame(frame);
-  }
-  // Hidden tabs get no animation frames. Keep the clock, rope and rules running
-  // so an online game never stalls when a player switches tabs.
-  setInterval(() => {
-    const now = performance.now();
-    if (now - last < 200) return;
-    let rest = Math.min(2, (now - last) / 1000);
-    last = now;
-    while (rest > 0) { const dt = Math.min(0.05, rest); tick(dt); rest -= dt; }
-  }, 250);
-  function tick(dt) {
-    if (G.state === 'menu') attract(dt);
-    if (G.state === 'play') {
-      G.elapsed += dt;
-      if (settings.time > 0) G.timeLeft = Math.max(0, G.timeLeft - dt);
-      renderTimer();
-      if (!isGuest()) {            // the guest waits for the host's verdict
-        if (S.pos <= -1) endGame(-1, 'line');
-        else if (S.pos >= 1) endGame(1, 'line');
-        else if (settings.time > 0 && G.timeLeft <= 0) endGame(Math.abs(S.pos) < 0.02 ? 0 : Math.sign(S.pos), 'time');
-      }
-      if (isHost() && (G.syncT += dt) >= 0.25) {
-        G.syncT = 0;
-        Net.send({ t: 'sync', target: S.target, pos: S.pos, timeLeft: G.timeLeft, elapsed: G.elapsed });
-      }
-    }
-    stepScene(dt);
+    return false;
   }
 
-  /* ---------- start up ---------- */
-  loadNames();
-  const hashJoin = /^#join-([A-Z0-9]{5})$/i.exec(location.hash);
-  if (hashJoin) {
-    $('mode-online').checked = true;
-    $('joinCode').value = hashJoin[1].toUpperCase();
-  }
-  readSettings();
-  $('boardBtn').hidden = !DB.configured;
-  setNetStatus(hashJoin ? `Type your name, then press Join to enter game ${hashJoin[1].toUpperCase()}.` : NET_HINT);
-  applyNames();
-  refreshMenu();
-  G.timeLeft = settings.time;
-  renderTimer(true);
-  previewPanels();
-  requestAnimationFrame(frame);
-
-  Net.detect().then(showVia);
-  function showVia(via) {
-    const lan = Net.lanUrls;
-    $('netVia').textContent = via === 'lan'
-      ? `LAN mode, no internet needed. Players on this network open ${lan[0] || 'this server’s address'}.`
-      : via === 'supa'
-        ? 'Internet mode through Supabase. Quick match pairs you with anyone waiting, or share a room code with a friend.'
-        : 'Internet mode. Both players open this page on any network; one hosts and the other joins with the code.';
-    refreshMenu();
-    if (!Net.supported()) {
-      $('hostBtn').disabled = true; $('joinBtn').disabled = true;
-      $('netVia').textContent = 'Online play needs a browser that supports it, such as Chrome, Edge or Firefox.';
-    }
-  }
+  return {
+    start, stop, tick, onNet, onKey, playerLeft,
+    handles: t => NET_EVENTS.has(t),
+    on(type, fn) { handlers[type] = fn; },
+    get active() { return !!M; },
+    get state() { return M ? M.state : null; },
+    get cfg() { return M ? M.cfg : null; },
+    CPU, sfx: Sfx,
+  };
 })();

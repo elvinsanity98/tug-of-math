@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /* Tug of Math LAN server.
-   Serves the game and relays online-play messages over WebSocket so two
-   devices on the same network can play without internet. No dependencies.
+   Serves the game and relays online-play messages over WebSocket so up to
+   ten devices on the same network can play Custom rooms without internet.
+   No dependencies.
 
    Usage:  node server.js [port]      (default 5173) */
 const http = require('http');
@@ -119,7 +120,8 @@ function sendText(c, msg) {
   sendFrame(c, 0x1, Buffer.from(typeof msg === 'string' ? msg : JSON.stringify(msg), 'utf8'));
 }
 
-/* ---------- rooms: one host + one guest, messages relayed between them ---------- */
+/* ---------- rooms: one host + up to 9 others, messages relayed between them ---------- */
+const MAX_PLAYERS = 10;
 const rooms = new Map();
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function newCode() {
@@ -127,6 +129,13 @@ function newCode() {
   do { code = Array.from({ length: 5 }, () => ALPHABET[crypto.randomInt(ALPHABET.length)]).join(''); }
   while (rooms.has(code));
   return code;
+}
+const cleanId = v => String(v || '').replace(/[^a-z0-9]/gi, '').slice(0, 40) || crypto.randomUUID().slice(0, 12);
+
+// everyone in the room learns who is there and who hosts
+function sendPeers(room) {
+  const msg = { sys: 'peers', ids: [...room.clients].map(x => x.id), host: room.host.id };
+  for (const x of room.clients) sendText(x, msg);
 }
 
 function onText(c, text) {
@@ -136,28 +145,34 @@ function onText(c, text) {
 
   if (m.sys === 'host') {
     leaveRoom(c);
+    c.id = cleanId(m.id);
     const code = newCode();
-    rooms.set(code, { host: c, guest: null });
+    const room = { host: c, clients: new Set([c]) };
+    rooms.set(code, room);
     c.room = code;
     sendText(c, { sys: 'hosted', code });
+    sendPeers(room);
     return;
   }
   if (m.sys === 'join') {
     leaveRoom(c);
+    c.id = cleanId(m.id);
     const code = String(m.code || '').toUpperCase();
     const room = rooms.get(code);
     if (!room) return sendText(c, { sys: 'error', text: 'No game found with that code.' });
-    if (room.guest) return sendText(c, { sys: 'error', text: 'That game already has two players.' });
-    room.guest = c;
+    if (room.clients.size >= MAX_PLAYERS) return sendText(c, { sys: 'error', text: 'That room is full.' });
+    room.clients.add(c);
     c.room = code;
-    sendText(room.host, { sys: 'paired' });
-    sendText(c, { sys: 'paired' });
+    sendText(c, { sys: 'joined', code });
+    sendPeers(room);
     return;
   }
   const room = c.room && rooms.get(c.room);
   if (!room) return;
-  const other = room.host === c ? room.guest : room.host;
-  if (other) sendText(other, text);
+  const out = JSON.stringify({ from: c.id, d: m.d });
+  for (const x of room.clients) {
+    if (x !== c && (!m.to || x.id === m.to)) sendText(x, out);
+  }
 }
 
 function leaveRoom(c) {
@@ -165,12 +180,12 @@ function leaveRoom(c) {
   const room = code && rooms.get(code);
   c.room = null;
   if (!room) return;
+  room.clients.delete(c);
   if (room.host === c) {
-    if (room.guest) { room.guest.room = null; sendText(room.guest, { sys: 'left' }); }
+    for (const x of room.clients) { x.room = null; sendText(x, { sys: 'closed' }); }
     rooms.delete(code);
-  } else if (room.guest === c) {
-    room.guest = null;
-    sendText(room.host, { sys: 'left' });
+  } else {
+    sendPeers(room);
   }
 }
 function drop(c) {
@@ -193,6 +208,6 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('  On other devices on the same Wi-Fi or network:');
     for (const u of urls) console.log(`                ${u}`);
   }
-  console.log('\n  In the game menu pick "LAN / Internet", host on one device and join with the code on the other.');
+  console.log('\n  In the game pick Custom, create a room on one device and join with the code on the others.');
   console.log('  Press Ctrl+C to stop.\n');
 });

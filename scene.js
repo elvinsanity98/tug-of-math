@@ -1,13 +1,15 @@
 /* Tug of Math — scene renderer.
-   Draws the field, both teams, the rope and all particles on one canvas.
-   The game (game.js) only touches the shared state object `S`. */
+   Draws the field, both teams (1 to 5 people a side, each in their own skin),
+   the rope and all particles on one canvas. The game (game.js) touches the
+   shared state object `S` and sets the teams with setTeams(). renderAvatar()
+   draws one character on any other canvas (dashboard, shop). */
 
 const VW = 960, VH = 520;          // virtual world size, scaled to fit the canvas
 const GROUND = 404;                // feet line
 const ROPE_Y = 318;                // rope height at rest
 const RANGE = 150;                 // ribbon travel from centre to a win line
 const FIELD_TOP = 350;
-const SPACING = 86, FRONT_GAP = 80;
+const FRONT_GAP = 80;
 
 const S = {
   t: 0,
@@ -21,24 +23,21 @@ const S = {
 };
 
 const TEAM = {
-  L: {
-    shirt: '#e5483f', shirtD: '#a92c25', shorts: '#2d3142', band: '#ffd23f',
-    members: [
-      { skin: '#f2c79a', hair: '#2b1a10', style: 'short', h: 1.00 },
-      { skin: '#8d5a3b', hair: '#15100d', style: 'afro',  h: 1.06 },
-      { skin: '#e8b58a', hair: '#8a4418', style: 'pony',  h: 0.95 },
-    ],
-  },
-  R: {
-    shirt: '#2f7de1', shirtD: '#1c55a3', shorts: '#26304a', band: '#ffffff',
-    members: [
-      { skin: '#c68c5e', hair: '#1a1311', style: 'pony',  h: 0.96 },
-      { skin: '#f5d0b0', hair: '#d9a441', style: 'short', h: 1.03 },
-      { skin: '#6e4630', hair: '#0f0b09', style: 'bald',  h: 1.07 },
-    ],
-  },
+  L: { shirt: '#e5483f', shirtD: '#a92c25', shorts: '#2d3142', band: '#ffd23f', members: [] },
+  R: { shirt: '#2f7de1', shirtD: '#1c55a3', shorts: '#26304a', band: '#ffffff', members: [] },
 };
-for (const k of ['L', 'R']) for (const m of TEAM[k].members) m.skinD = shade(m.skin, -0.18);
+const AVATAR_TEAM = { shirt: '#7b5cff', shirtD: '#4b33b8', shorts: '#2d3142', band: '#ffd23f' };
+
+/* people: [{ look: index into Catalog.LOOKS, cos: skin id, label, me }] per side */
+function makeMember(o, i) {
+  const base = Catalog.LOOKS[(o.look == null ? i : o.look) % Catalog.LOOKS.length];
+  return Object.assign({}, base, { skinD: shade(base.skin, -0.18), cos: o.cos || 'classic', label: o.label || '', me: !!o.me });
+}
+function setTeams(L, R) {
+  TEAM.L.members = L.map(makeMember);
+  TEAM.R.members = R.map(makeMember);
+  resetLanded();
+}
 
 const CLOUDS = [
   { x: 60, y: 70, s: 1.1, v: 7 }, { x: 420, y: 46, s: 0.8, v: 5 },
@@ -51,7 +50,8 @@ const TREES = [
 const BUNTING = ['#e5483f', '#ffd23f', '#2f7de1', '#ffffff'];
 
 const canvas = document.getElementById('scene');
-const ctx = canvas.getContext('2d');
+const sceneCtx = canvas.getContext('2d');
+let ctx = sceneCtx;
 let DPR = 1, CW = 1, CH = 1;
 
 function resizeCanvas() {
@@ -134,6 +134,9 @@ function drawParts() {
       ctx.scale(1, Math.cos(q.rot * 2.3));
       ctx.fillStyle = q.color; ctx.fillRect(-q.size / 2, -q.size / 4, q.size, q.size / 2);
       ctx.restore();
+    } else if (q.type === 'dot') {
+      ctx.globalAlpha = 1 - k;
+      circle(q.x, q.y, q.size * (1 - k * 0.5), q.color);
     } else if (q.type === 'text') {
       const pop = k < 0.15 ? easeOut(k / 0.15) * 1.15 : 1.15 - Math.min(0.15, (k - 0.15));
       ctx.globalAlpha = k > 0.7 ? (1 - k) / 0.3 : 1;
@@ -347,10 +350,10 @@ function drawRope(hxL, hxR) {
   }
   if (S.winner < 0) {             // red won: blue end lies on the grass
     ropeStroke(tailPath(RSPAN.a, -1));
-    ropeStroke(() => { ctx.beginPath(); ctx.moveTo(d.x1, ropeAt(d.x1)); ctx.lineTo(hxR[2] + 110, GROUND); });
+    ropeStroke(() => { ctx.beginPath(); ctx.moveTo(d.x1, ropeAt(d.x1)); ctx.lineTo(hxR[hxR.length - 1] + 110, GROUND); });
   } else {
     ropeStroke(tailPath(RSPAN.b, 1));
-    ropeStroke(() => { ctx.beginPath(); ctx.moveTo(d.x0, ropeAt(d.x0)); ctx.lineTo(hxL[2] - 110, GROUND); });
+    ropeStroke(() => { ctx.beginPath(); ctx.moveTo(d.x0, ropeAt(d.x0)); ctx.lineTo(hxL[hxL.length - 1] - 110, GROUND); });
   }
   ropeStroke(spanPath(d.x0, d.x1));
 }
@@ -409,10 +412,8 @@ function teamPose(k, i, ropeY) {
   p.mood = mine > 0.3 ? 'pull' : (theirs > 0.35 || flinch > 0.3) ? 'strain' : 'grit';
   return p;
 }
-function buildPerson(k, i, hx) {
+function buildPerson(k, i, hx, m = TEAM[k].members[i], p = teamPose(k, i, ropeAt(hx)), team = TEAM[k]) {
   const dir = k === 'L' ? 1 : -1;
-  const m = TEAM[k].members[i];
-  const p = teamPose(k, i, ropeAt(hx));
   const h = m.h, by = GROUND - p.jump, lean = p.lean;
   const hip = { x: -30 - lean * 18 + p.slide * 0.45, y: by - 58 * h + lean * 12 + p.bob };
   const T = 48 * h;
@@ -430,7 +431,7 @@ function buildPerson(k, i, hx) {
     hB = lerpP(hB, { x: sh.x - 6, y: sh.y - 58 * h - wav }, up);
   }
   const eF = ik(sh, hF, 36 * h, 34 * h, 1), eB = ik(sh, hB, 36 * h, 34 * h, 1);
-  return { k, i, dir, hx, m, p, h, hip, sh, hd, hr, fF, fB, kF, kB, hF, hB, eF, eB };
+  return { k, i, dir, hx, m, p, T: team, h, hip, sh, hd, hr, fF, fB, kF, kB, hF, hB, eF, eB };
 }
 function applyXf(P) {
   ctx.translate(P.hx, 0);
@@ -465,9 +466,10 @@ function drawShadow(P) {
   ctx.beginPath(); ctx.ellipse(x, GROUND + 3, 36 * s + P.p.fall * 30, 6 * s, 0, 0, Math.PI * 2); ctx.fill();
 }
 function drawBody(P) {
-  const { m, h, p } = P, T = TEAM[P.k];
+  const { m, h, p, T } = P;
   ctx.save(); applyXf(P);
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  drawCosBack(P);
   drawArm(P.sh, P.eB, P.hB, T.shirtD, m.skinD, h);
   drawLeg(P.hip, P.kB, P.fB, shade(T.shorts, -0.3), m.skinD, h, p.liftB);
   line(P.sh, lerpP(P.sh, P.hd, 0.6), m.skinD, 8 * h);
@@ -483,35 +485,30 @@ function drawBody(P) {
 function drawNearArm(P) {
   ctx.save(); applyXf(P);
   ctx.lineCap = 'round';
-  drawArm(P.sh, P.eF, P.hF, TEAM[P.k].shirt, P.m.skin, P.h);
+  drawArm(P.sh, P.eF, P.hF, P.T.shirt, P.m.skin, P.h);
   ctx.restore();
 }
 
+const BAND_SKINS = new Set(['classic', 'shades', 'cat', 'halo', 'legend']);
 function drawHead(P) {
-  const { m, h, p, hr } = P, T = TEAM[P.k];
+  const { m, h, p, hr, T } = P;
   const ink = '#1f2433';
   ctx.save(); ctx.translate(P.hd.x, P.hd.y); ctx.rotate(-p.lean * 0.35);
-  if (m.style === 'afro') circle(-1.5 * h, -2 * h, hr * 1.28, m.hair);
-  if (m.style === 'pony') {
+  const hat = m.cos === 'robot';
+  if (m.style === 'afro' && !hat) circle(-1.5 * h, -2 * h, hr * 1.28, m.hair);
+  if (m.style === 'pony' && !hat) {
     circle(-hr * 1.02, 0, hr * 0.4, m.hair);
     ctx.fillStyle = m.hair;
     ctx.beginPath(); ctx.ellipse(-hr * 1.45, 6 * h + Math.sin(S.t * 8 + P.i) * 1.5, hr * 0.3, hr * 0.58, 0.5, 0, Math.PI * 2); ctx.fill();
   }
   circle(0, 0, hr, m.skin);
-  if (m.style !== 'bald') {
+  if (m.style !== 'bald' && m.cos !== 'robot') {
     ctx.fillStyle = m.hair;
     ctx.beginPath(); ctx.arc(0, 0, hr + 0.6, Math.PI * 0.92, Math.PI * 1.9);
     ctx.quadraticCurveTo(hr * 0.2, -hr * 0.5, -hr * 0.3, -hr * 0.3);
     ctx.closePath(); ctx.fill();
   }
-  // headband in team colour, with tails that flap
-  ctx.save(); ctx.beginPath(); ctx.arc(0, 0, hr + 0.8, 0, Math.PI * 2); ctx.clip();
-  ctx.fillStyle = T.band; ctx.fillRect(-hr - 2, -hr * 0.56, hr * 2 + 4, hr * 0.34);
-  ctx.restore();
-  const fl = Math.sin(S.t * 12 + P.i * 2) * 2.5;
-  ctx.strokeStyle = T.band; ctx.lineWidth = 2.6 * h; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(-hr + 1, -hr * 0.4); ctx.quadraticCurveTo(-hr - 6, -hr * 0.45 + fl, -hr - 12, -hr * 0.12 + fl * 1.4); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-hr + 1, -hr * 0.35); ctx.quadraticCurveTo(-hr - 5, -hr * 0.1 - fl, -hr - 9, hr * 0.25 - fl); ctx.stroke();
+  if (BAND_SKINS.has(m.cos)) drawBand(P, T.band);
   circle(-2 * h, 2 * h, 3 * h, m.skinD);
   circle(hr - 0.5, 1.5 * h, 2.6 * h, m.skin);
   // face
@@ -541,7 +538,223 @@ function drawHead(P) {
     ctx.beginPath(); ctx.moveTo(ex - 3 * h, ey - 4.2 * h); ctx.lineTo(ex + 2.6 * h, ey - 3.4 * h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(4 * h, 6 * h); ctx.lineTo(9.2 * h, 5.4 * h); ctx.stroke();
   }
+  drawHeadgear(P, ex, ey);
   ctx.restore();
+}
+
+// headband in team colour, with tails that flap
+function drawBand(P, color) {
+  const { h, hr } = P;
+  ctx.save(); ctx.beginPath(); ctx.arc(0, 0, hr + 0.8, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = color; ctx.fillRect(-hr - 2, -hr * 0.56, hr * 2 + 4, hr * 0.34);
+  ctx.restore();
+  const fl = Math.sin(S.t * 12 + P.i * 2) * 2.5;
+  ctx.strokeStyle = color; ctx.lineWidth = 2.6 * h; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-hr + 1, -hr * 0.4); ctx.quadraticCurveTo(-hr - 6, -hr * 0.45 + fl, -hr - 12, -hr * 0.12 + fl * 1.4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-hr + 1, -hr * 0.35); ctx.quadraticCurveTo(-hr - 5, -hr * 0.1 - fl, -hr - 9, hr * 0.25 - fl); ctx.stroke();
+}
+
+/* ---------- skins: headgear drawn in head space (facing +x), extras drawn behind the body ---------- */
+function drawHeadgear(P, ex, ey) {
+  const { m, h, hr, T } = P;
+  const ink = '#1f2433';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  switch (m.cos) {
+    case 'cap': {
+      ctx.fillStyle = T.shirt;
+      ctx.beginPath(); ctx.arc(0, -hr * 0.3, hr + 0.6, Math.PI * 1.02, Math.PI * 1.98); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = T.shirtD;
+      ctx.beginPath(); ctx.ellipse(hr * 0.78, -hr * 0.36, hr * 0.72, hr * 0.17, 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = T.shirtD; ctx.lineWidth = 1.3 * h;
+      ctx.beginPath(); ctx.moveTo(0, -hr * 1.28); ctx.quadraticCurveTo(hr * 0.35, -hr * 0.9, hr * 0.3, -hr * 0.42); ctx.stroke();
+      circle(0, -hr * 1.3, 1.9 * h, T.shirtD);
+      ctx.fillStyle = '#fff'; ctx.font = `700 ${7 * h}px Fredoka, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('×', -hr * 0.3, -hr * 0.8);
+      break;
+    }
+    case 'shades': {
+      ctx.strokeStyle = '#15161c'; ctx.lineWidth = 1.4 * h;
+      ctx.beginPath(); ctx.moveTo(ex - 3.5 * h, ey - 0.8 * h); ctx.lineTo(-hr * 0.85, ey - 1.8 * h); ctx.stroke();
+      ctx.fillStyle = '#15161c';
+      ctx.beginPath(); ctx.ellipse(ex + 0.6 * h, ey, 4.4 * h, 3 * h, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1 * h;
+      ctx.beginPath(); ctx.moveTo(ex - 1.2 * h, ey - 1.4 * h); ctx.lineTo(ex + 1.6 * h, ey - 1.4 * h); ctx.stroke();
+      break;
+    }
+    case 'cat': {
+      for (const [a, s] of [[-2.05, 1], [-1.2, 0.92]]) {
+        const bx1 = Math.cos(a - 0.3) * hr, by1 = Math.sin(a - 0.3) * hr;
+        const bx2 = Math.cos(a + 0.3) * hr, by2 = Math.sin(a + 0.3) * hr;
+        const tx = Math.cos(a) * (hr + 9 * h * s), ty = Math.sin(a) * (hr + 9 * h * s);
+        ctx.fillStyle = m.hair; ctx.beginPath(); ctx.moveTo(bx1, by1); ctx.lineTo(tx, ty); ctx.lineTo(bx2, by2); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#ff9fb6';
+        ctx.beginPath(); ctx.moveTo(lerp(bx1, tx, 0.25), lerp(by1, ty, 0.25)); ctx.lineTo(lerp(tx, (bx1 + bx2) / 2, 0.22), lerp(ty, (by1 + by2) / 2, 0.22));
+        ctx.lineTo(lerp(bx2, tx, 0.25), lerp(by2, ty, 0.25)); ctx.closePath(); ctx.fill();
+      }
+      ctx.strokeStyle = ink; ctx.lineWidth = 0.8 * h;
+      for (const dy of [-0.6, 0.8]) { ctx.beginPath(); ctx.moveTo(hr * 0.55, 3.5 * h); ctx.lineTo(hr * 1.2, (3.5 + dy * 2) * h); ctx.stroke(); }
+      break;
+    }
+    case 'pirate': {
+      circle(ex, ey, 2.8 * h, '#15161c');
+      ctx.strokeStyle = '#15161c'; ctx.lineWidth = 1.2 * h;
+      ctx.beginPath(); ctx.moveTo(ex - 1.5 * h, ey - 2.4 * h); ctx.lineTo(-hr * 0.7, -hr * 0.62); ctx.stroke();
+      ctx.fillStyle = '#1d1b22';
+      ctx.beginPath(); ctx.arc(0, -hr * 0.42, hr * 0.92, Math.PI, Math.PI * 2); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-hr - 7 * h, -hr * 0.2);
+      ctx.quadraticCurveTo(0, -hr * 0.75, hr + 7 * h, -hr * 0.2);
+      ctx.quadraticCurveTo(0, -hr * 0.2, -hr - 7 * h, -hr * 0.2); ctx.fill();
+      ctx.strokeStyle = '#e8c35a'; ctx.lineWidth = 1.2 * h;
+      ctx.beginPath(); ctx.moveTo(-hr - 6 * h, -hr * 0.24); ctx.quadraticCurveTo(0, -hr * 0.7, hr + 6 * h, -hr * 0.24); ctx.stroke();
+      circle(0, -hr * 0.92, 2.4 * h, '#f4f1ea');
+      circle(-0.8 * h, -hr * 0.95, 0.6 * h, '#1d1b22'); circle(0.8 * h, -hr * 0.95, 0.6 * h, '#1d1b22');
+      break;
+    }
+    case 'ninja': {
+      ctx.save(); ctx.beginPath(); ctx.arc(0, 0, hr + 0.8, 0, Math.PI * 2); ctx.clip();
+      ctx.fillStyle = '#23242c'; ctx.fillRect(-hr - 2, -hr - 2, hr * 2 + 4, hr * 2 + 4);
+      ctx.fillStyle = m.skin; ctx.fillRect(hr * 0.05, ey - 3.2 * h, hr, 5.6 * h);
+      ctx.restore();
+      circle(ex, ey, 1.7 * h, ink);
+      ctx.strokeStyle = ink; ctx.lineWidth = 1.5 * h;
+      ctx.beginPath(); ctx.moveTo(ex - 3 * h, ey - 3.8 * h); ctx.lineTo(ex + 2.8 * h, ey - 2.4 * h); ctx.stroke();
+      drawBand(P, T.shirt);
+      break;
+    }
+    case 'viking': {
+      ctx.fillStyle = '#f3ead2'; ctx.strokeStyle = '#b9a67a'; ctx.lineWidth = 1 * h;
+      for (const s of [1, -1]) {
+        ctx.beginPath(); ctx.moveTo(s * hr * 0.55, -hr * 0.7);
+        ctx.quadraticCurveTo(s * hr * 1.45, -hr * 0.9, s * hr * 1.2, -hr * 1.75);
+        ctx.quadraticCurveTo(s * hr * 1.05, -hr * 1.1, s * hr * 0.25, -hr * 0.95); ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+      ctx.fillStyle = '#aeb8c2';
+      ctx.beginPath(); ctx.arc(0, -hr * 0.28, hr + 1, Math.PI * 1.02, Math.PI * 1.98); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(hr * 0.2, -hr * 0.95, hr * 0.35, hr * 0.12, -0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8a6a3a'; ctx.fillRect(-hr - 1, -hr * 0.42, hr * 2 + 2, hr * 0.22);
+      for (let x = -hr * 0.7; x <= hr * 0.8; x += hr * 0.5) circle(x, -hr * 0.31, 0.9 * h, '#e8c35a');
+      break;
+    }
+    case 'wizard': {
+      const sway = Math.sin(S.t * 2.4 + P.i) * 3 * h;
+      ctx.fillStyle = '#5b3fc4';
+      ctx.beginPath(); ctx.moveTo(-hr * 0.85, -hr * 0.55);
+      ctx.quadraticCurveTo(-hr * 0.1, -hr * 1.7, -hr * 0.9 + sway, -hr * 2.9);
+      ctx.quadraticCurveTo(hr * 0.35, -hr * 1.6, hr * 0.85, -hr * 0.55); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, -hr * 0.55, hr + 6 * h, 2.8 * h, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(-hr * 0.8, -hr * 0.85, hr * 1.6, 2.4 * h);
+      for (const [x, y, r] of [[-0.1, -1.35, 1.7], [-0.45, -1.9, 1.3], [0.3, -1.1, 1.1]]) drawStar(x * hr, y * hr, r * h, '#ffe680');
+      circle(-hr * 0.9 + sway, -hr * 2.9, 1.8 * h, '#ffd23f');
+      break;
+    }
+    case 'astro': {
+      ctx.fillStyle = 'rgba(160,215,255,.28)'; ctx.strokeStyle = '#f4f7fb'; ctx.lineWidth = 3 * h;
+      ctx.beginPath(); ctx.arc(1 * h, -0.5 * h, hr * 1.42, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.6 * h;
+      ctx.beginPath(); ctx.arc(1 * h, -0.5 * h, hr * 1.18, Math.PI * 1.15, Math.PI * 1.45); ctx.stroke();
+      ctx.fillStyle = '#f4f7fb'; ctx.fillRect(-hr * 0.9, hr * 1.05, hr * 1.9, 3.5 * h);
+      ctx.fillStyle = T.shirt; ctx.fillRect(-hr * 0.35, hr * 1.1, hr * 0.7, 2.4 * h);
+      break;
+    }
+    case 'robot': {
+      ctx.fillStyle = '#b7c1cc';
+      roundRect(-hr - 1, -hr - 1, hr * 2 + 2, hr * 2 + 2, 4 * h); ctx.fill();
+      ctx.fillStyle = '#9aa6b3'; roundRect(-hr - 1, hr * 0.35, hr * 2 + 2, hr * 0.65 + 1, 3 * h); ctx.fill();
+      ctx.fillStyle = '#1d2a36'; roundRect(hr * 0.05, ey - 3.6 * h, hr + 0.5, 6.2 * h, 2 * h); ctx.fill();
+      const blink = (S.t * 0.7 + P.i * 0.3) % 3 < 0.08;
+      ctx.fillStyle = '#5ff4ff'; ctx.shadowColor = '#5ff4ff'; ctx.shadowBlur = 6 * h;
+      if (blink) ctx.fillRect(ex - 2 * h, ey - 0.4 * h, 4 * h, 0.8 * h); else circle(ex, ey, 2 * h, '#5ff4ff');
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#6b7784'; ctx.lineWidth = 1 * h;
+      for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(3 * h + i * 2.6 * h, 5.5 * h); ctx.lineTo(3 * h + i * 2.6 * h, 8.5 * h); ctx.stroke(); }
+      circle(-3 * h, 1 * h, 2.6 * h, '#8a96a3'); circle(-3 * h, 1 * h, 1.1 * h, T.shirt);
+      line({ x: 0, y: -hr - 1 }, { x: 0, y: -hr - 7 * h }, '#6b7784', 1.4 * h);
+      circle(0, -hr - 8 * h, 2.2 * h, Math.sin(S.t * 6 + P.i) > 0 ? T.shirt : '#ff5d5d');
+      break;
+    }
+    case 'crown': {
+      ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1 * h;
+      ctx.beginPath(); ctx.moveTo(-hr * 0.75, -hr * 0.62);
+      for (const [x, y] of [[-hr * 0.85, -hr * 1.45], [-hr * 0.4, -hr * 1.0], [0, -hr * 1.6], [hr * 0.4, -hr * 1.0], [hr * 0.85, -hr * 1.45], [hr * 0.75, -hr * 0.62]]) ctx.lineTo(x, y);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      circle(0, -hr * 0.82, 1.8 * h, '#e5483f'); circle(-hr * 0.45, -hr * 0.78, 1.3 * h, '#2f7de1'); circle(hr * 0.45, -hr * 0.78, 1.3 * h, '#23a257');
+      for (const x of [-hr * 0.85, 0, hr * 0.85]) circle(x, x ? -hr * 1.45 : -hr * 1.6, 1.3 * h, '#fff3b0');
+      break;
+    }
+    case 'halo': {
+      const bob = Math.sin(S.t * 3 + P.i) * 1.5 * h;
+      ctx.shadowColor = '#bfe8ff'; ctx.shadowBlur = 10 * h;
+      ctx.strokeStyle = '#fff4b8'; ctx.lineWidth = 2.6 * h;
+      ctx.beginPath(); ctx.ellipse(-1 * h, -hr - 7 * h + bob, hr * 0.8, 2.6 * h, -0.1, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
+      break;
+    }
+    case 'legend': {
+      ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 0.8 * h;
+      for (let a = Math.PI * 0.95; a <= Math.PI * 1.96; a += 0.17) {
+        const x = Math.cos(a) * (hr + 1.5), y = Math.sin(a) * (hr + 1.5);
+        ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2 + 0.5);
+        ctx.beginPath(); ctx.ellipse(0, 0, 1.6 * h, 3.6 * h, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      circle(0, -hr - 2.5 * h, 2.2 * h, '#ff7a2f');
+      break;
+    }
+  }
+}
+function drawCosBack(P) {
+  const { m, h } = P;
+  if (m.cos === 'halo') {
+    const flap = Math.sin(S.t * 5 + P.i) * 0.18;
+    const o = { x: P.sh.x - 4 * h, y: P.sh.y + 8 * h };
+    ctx.save(); ctx.translate(o.x, o.y); ctx.rotate(-0.5 - flap);
+    ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#a9d8ff'; ctx.lineWidth = 1.4 * h;
+    ctx.beginPath(); ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(-18 * h, -34 * h, -44 * h, -30 * h);
+    ctx.quadraticCurveTo(-36 * h, -20 * h, -40 * h, -14 * h);
+    ctx.quadraticCurveTo(-30 * h, -10 * h, -32 * h, -2 * h);
+    ctx.quadraticCurveTo(-18 * h, -2 * h, 0, 0); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  } else if (m.cos === 'legend') {
+    const cx = lerp(P.hip.x, P.sh.x, 0.5), cy = lerp(P.hip.y, P.sh.y, 0.5);
+    const g = ctx.createRadialGradient(cx, cy, 6 * h, cx, cy, 62 * h);
+    g.addColorStop(0, 'rgba(255,210,63,.55)'); g.addColorStop(0.6, 'rgba(255,122,47,.25)'); g.addColorStop(1, 'rgba(255,122,47,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, 62 * h, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i - 2) * 0.42, f = 1 + Math.sin(S.t * 9 + i * 1.7) * 0.18;
+      const bx = cx + Math.cos(a) * 26 * h, by = cy + Math.sin(a) * 30 * h;
+      const tx = cx + Math.cos(a) * 54 * h * f, ty = cy + Math.sin(a) * 60 * h * f;
+      ctx.fillStyle = i % 2 ? 'rgba(255,179,58,.75)' : 'rgba(255,122,47,.7)';
+      ctx.beginPath(); ctx.moveTo(bx - 7 * h, by); ctx.quadraticCurveTo(bx, by - 6 * h, tx, ty); ctx.quadraticCurveTo(bx + 2 * h, by - 4 * h, bx + 7 * h, by); ctx.closePath(); ctx.fill();
+    }
+  }
+}
+function drawStar(x, y, r, color) {
+  ctx.fillStyle = color; ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.closePath(); ctx.fill();
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+// name tags over heads, staggered so neighbours do not overlap
+function drawLabels(people) {
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  for (const P of people) {
+    const lab = P.m.label;
+    if (!lab || P.p.fall > 0.3) continue;
+    const x = P.hx + P.dir * P.hd.x, y = P.hd.y - P.hr - (P.m.cos === 'wizard' ? 34 : 20) - (P.i % 2) * 14;
+    const text = lab.length > 9 ? lab.slice(0, 8) + '…' : lab;
+    ctx.font = '600 14px Fredoka, "Segoe UI", sans-serif';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,24,36,.85)'; ctx.strokeText(text, x, y);
+    ctx.fillStyle = P.m.me ? '#ffd23f' : '#ffffff'; ctx.fillText(text, x, y);
+  }
 }
 
 /* ---------- per-frame effects tied to bodies ---------- */
@@ -561,6 +774,11 @@ function bodyEffects(P, dt) {
   if ((P.p.mood === 'strain' || P.p.mood === 'pull') && Math.random() < dt * 1.6) {
     const hx = P.hx + P.dir * P.hd.x, hy = P.hd.y - 6;
     spawn({ type: 'sweat', x: hx, y: hy, vx: -P.dir * (40 + Math.random() * 40), vy: -70 - Math.random() * 40, g: 420, life: 0.6, size: 2.4 });
+  }
+  if (P.m.cos === 'legend' && S.mode !== 'over' && Math.random() < dt * 6) {
+    const x = P.hx + P.dir * lerp(P.hip.x, P.sh.x, 0.5);
+    spawn({ type: 'dot', x: x + (Math.random() - 0.5) * 40, y: P.hip.y - 10, vx: (Math.random() - 0.5) * 20, vy: -60 - Math.random() * 50,
+      life: 0.7, size: 2, color: Math.random() < 0.5 ? '#ffd23f' : '#ff7a2f' });
   }
   const key = P.k + P.i;
   if (P.p.fall > 0.92 && !landed[key]) {
@@ -606,9 +824,11 @@ function renderScene(dt) {
   drawMud();
 
   const mx = VW / 2 + S.pos * RANGE;
-  const hxL = [0, 1, 2].map(i => mx - FRONT_GAP - i * SPACING);
-  const hxR = [0, 1, 2].map(i => mx + FRONT_GAP + i * SPACING);
-  RSPAN.a = hxL[2] - 13; RSPAN.b = hxR[2] + 13;
+  const nL = Math.max(1, TEAM.L.members.length), nR = Math.max(1, TEAM.R.members.length);
+  const n = Math.max(nL, nR), SP = n <= 3 ? 86 : n === 4 ? 76 : 68;
+  const hxL = Array.from({ length: nL }, (_, i) => mx - FRONT_GAP - i * SP);
+  const hxR = Array.from({ length: nR }, (_, i) => mx + FRONT_GAP + i * SP);
+  RSPAN.a = hxL[nL - 1] - 13; RSPAN.b = hxR[nR - 1] + 13;
   RSPAN.sag = S.mode === 'menu' ? 8 : 4;
   RSPAN.drop = null;
   if (S.mode === 'over' && S.winner) {
@@ -619,13 +839,17 @@ function renderScene(dt) {
   }
 
   const people = [];
-  for (let i = 2; i >= 0; i--) { people.push(buildPerson('L', i, hxL[i])); people.push(buildPerson('R', i, hxR[i])); }
+  for (let i = n - 1; i >= 0; i--) {
+    if (TEAM.L.members[i]) people.push(buildPerson('L', i, hxL[i]));
+    if (TEAM.R.members[i]) people.push(buildPerson('R', i, hxR[i]));
+  }
   for (const P of people) drawShadow(P);
   for (const P of people) drawBody(P);
   drawRope(hxL, hxR);
   drawRibbon(mx);
   for (const P of people) drawNearArm(P);
   for (const P of people) bodyEffects(P, dt);
+  drawLabels(people);
 
   drawParts();
   ctx.restore();
@@ -634,3 +858,30 @@ function renderScene(dt) {
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(10,30,20,.22)');
   ctx.fillStyle = vg; ctx.fillRect(-20, -20, VW + 40, VH + 40);
 }
+
+/* ---------- one character on another canvas (dashboard hero, shop cards) ---------- */
+// pose: cheer | stand; frame: full (whole body) | bust (head and shoulders, for shop cards)
+function renderAvatar(cv, cos, look, t, pose, frame) {
+  const c2 = cv.getContext('2d');
+  if (!c2) return;
+  const saveT = S.t;
+  ctx = c2; S.t = t || 0;
+  try {
+    const W = cv.width, H = cv.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (frame === 'bust') { const sc = Math.min(H / 86, W / 84); ctx.setTransform(sc, 0, 0, sc, W / 2 + 36 * sc, H * 0.5 - (GROUND - 122) * sc); }
+    else { const sc = H / 196; ctx.setTransform(sc, 0, 0, sc, W / 2 + 22 * sc, H - 8 * sc - GROUND * sc); }
+    const cheer = pose !== 'stand';
+    const p = { lean: cheer ? 0.04 : 0.12, bob: Math.sin(S.t * 3) * 1.4, liftA: 0, liftB: 0, slide: 0,
+      jump: cheer ? Math.abs(Math.sin(S.t * 3.2)) * 5 : 0, armsUp: cheer ? 1 : 0, fall: 0, mood: 'win', ropeY: ROPE_Y };
+    const P = buildPerson('L', 0, 0, makeMember({ look, cos }, 0), p, AVATAR_TEAM);
+    ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(P.hip.x, GROUND + 3, 34, 6, 0, 0, Math.PI * 2); ctx.fill();
+    drawBody(P);
+    drawNearArm(P);
+  } finally {
+    ctx = sceneCtx; S.t = saveT;
+  }
+}
+
+setTeams([{ look: 0 }, { look: 1 }, { look: 2 }], [{ look: 3 }, { look: 4 }, { look: 5 }]);
