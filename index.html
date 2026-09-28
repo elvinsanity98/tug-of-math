@@ -70,12 +70,13 @@
     <div class="field">
       <span class="f-label">Players</span>
       <div class="seg" role="radiogroup" aria-label="Players">
-        <input type="radio" name="mode" id="mode-2p" value="2p" checked><label for="mode-2p">2 players</label>
+        <input type="radio" name="mode" id="mode-local" value="local" checked><label for="mode-local">Same PC</label>
+        <input type="radio" name="mode" id="mode-online" value="online"><label for="mode-online">LAN / Internet</label>
         <input type="radio" name="mode" id="mode-cpu" value="cpu"><label for="mode-cpu">Vs computer</label>
       </div>
     </div>
     <div class="field">
-      <label class="f-label" for="nameInL">Names</label>
+      <label class="f-label" for="nameInL" id="nameLabel">Names</label>
       <div class="names" id="nameGrid">
         <input type="text" id="nameInL" class="name-in red" maxlength="14" placeholder="Red Team" autocomplete="off" spellcheck="false" aria-label="Red side name">
         <input type="text" id="nameInR" class="name-in blue" maxlength="14" placeholder="Blue Team" autocomplete="off" spellcheck="false" aria-label="Blue side name">
@@ -89,6 +90,26 @@
         <input type="radio" name="cpu" id="cpu-hard" value="hard"><label for="cpu-hard">Champion</label>
       </div>
     </div>
+    <div class="field" id="netField" hidden>
+      <span class="f-label">Online</span>
+      <div class="net">
+        <div class="net-row" id="netIdle">
+          <button type="button" class="pill-btn host" id="hostBtn">Host a game</button>
+          <span class="net-or">or</span>
+          <input type="text" id="joinCode" class="code-in" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Room code to join">
+          <button type="button" class="pill-btn" id="joinBtn">Join</button>
+        </div>
+        <div class="net-row" id="netRoom" hidden>
+          <span class="net-code-label">Room</span>
+          <b class="net-code" id="netCode">-----</b>
+          <button type="button" class="pill-btn" id="copyBtn">Copy invite</button>
+          <button type="button" class="pill-btn quiet" id="leaveBtn">Leave</button>
+        </div>
+        <p class="net-status" id="netStatus" aria-live="polite">Host a game to get a room code, or type a friend's code and join.</p>
+        <p class="net-via" id="netVia"></p>
+      </div>
+    </div>
+    <fieldset class="host-set" id="hostSettings">
     <div class="field">
       <span class="f-label">Math</span>
       <div class="seg ops" role="radiogroup" aria-label="Operation">
@@ -115,9 +136,10 @@
         <input type="radio" name="time" id="time-0" value="0"><label for="time-0">No limit</label>
       </div>
     </div>
+    </fieldset>
 
     <button class="go" id="startBtn" type="button">Start the tug</button>
-    <p class="fine">Red: A S D F &nbsp;·&nbsp; Blue: J K L ; &nbsp;·&nbsp; or tap. Enter starts.</p>
+    <p class="fine" id="menuFine">Red: A S D F &nbsp;·&nbsp; Blue: J K L ; &nbsp;·&nbsp; or tap. Enter starts.</p>
   </div>
 </div>
 
@@ -138,6 +160,7 @@
 </div>
 
 <script src="scene.js"></script>
+<script src="net.js"></script>
 <script src="game.js"></script>
 </body>
 </html>

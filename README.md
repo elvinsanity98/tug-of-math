@@ -2,17 +2,34 @@
 
 A two-sided math race drawn as an animated tug of war. Each correct answer is a pull on the rope, and faster answers pull harder. Drag the gold ribbon over your chalk line to win.
 
-## Play
+## Three ways to play
 
-Open `index.html` in any modern browser. No build step or install needed.
+| Mode | What you need |
+| ---- | ------------- |
+| **Same PC** | One computer or tablet. Red and Blue share the keyboard or screen. |
+| **LAN** | Two devices on the same Wi-Fi or network, plus Node.js on one of them. No internet needed. |
+| **Internet** | Two devices anywhere, both with internet, opening the game from a web address. |
 
-Or serve the folder locally:
+### Same PC
 
-```bash
-python -m http.server 5173
-```
+Open `index.html` in a browser and press **Start the tug**.
 
-Then visit http://localhost:5173/.
+### LAN (same Wi-Fi, no internet needed)
+
+1. On one computer, double-click `start-lan-server.bat` (or run `node server.js`). It needs [Node.js](https://nodejs.org).
+2. The window prints addresses such as `http://192.168.1.20:5173/`. If Windows asks about the firewall, allow access on **private** networks.
+3. Both players open that address in a browser.
+4. Pick **LAN / Internet** in the menu. One player presses **Host a game**, and the other types the room code and presses **Join**.
+
+### Internet (anywhere)
+
+The page has to be on the web. The easiest way is GitHub Pages:
+
+1. In this repository go to **Settings → Pages**, choose **Deploy from a branch**, branch `main`, folder `/ (root)`, and save.
+2. After a minute the game is live at `https://<your-user>.github.io/tug-of-math/`.
+3. Both players open that link and pick **LAN / Internet**. One hosts; the other joins with the code, or opens the invite link from **Copy invite**.
+
+Internet games connect the two browsers directly (WebRTC through [PeerJS](https://peerjs.com)), so there is no game server to run. A few strict school or office networks block these connections; if joining never finishes, use LAN mode instead.
 
 ## How it works
 
@@ -20,10 +37,11 @@ Then visit http://localhost:5173/.
 - **Speed matters:** an answer in under a second gives the strongest pull. Streaks add a bonus.
 - **Slips:** a wrong answer slides your team back a little and locks you out for one second. The right answer is shown.
 - **Winning:** pull the ribbon over your line, or have it on your side when the clock runs out.
+- **Online:** the host is Red and runs the rules; the guest is Blue. The host picks the settings and starts each round.
 
 ## Options
 
-- 2 players (with custom names) or vs computer (Rookie, Athlete, Champion)
+- Same PC with custom names, LAN / Internet, or vs computer (Rookie, Athlete, Champion)
 - Math: addition, subtraction, times tables, division, or a mix
 - Level: Easy, Medium, Hard
 - Round: 60 s, 90 s, or no limit
@@ -35,11 +53,14 @@ Then visit http://localhost:5173/.
 | Red  | `A` `S` `D` `F` or `1`–`4` |
 | Blue | `J` `K` `L` `;` or `7`–`0` |
 
-You can also tap or click the answers, so two players can share a tablet. `Enter` starts a round, `Esc` returns to the menu.
+In online games any of these keys answer for your own side. You can also tap or click the answers. `Enter` starts a round, `Esc` returns to the menu.
 
 ## Files
 
 - `index.html` – page markup
 - `style.css` – layout and theme
 - `scene.js` – canvas renderer: field, characters, rope, particles
-- `game.js` – questions, scoring, computer player, sound, main loop
+- `game.js` – questions, scoring, computer player, online rules, sound, main loop
+- `net.js` – connection for online play (LAN WebSocket or internet WebRTC)
+- `server.js` – LAN server with no dependencies: serves the game and relays moves
+- `start-lan-server.bat` – double-click launcher for the LAN server on Windows
