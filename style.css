@@ -175,6 +175,7 @@ kbd{
   font:600 14px/1.2 var(--body);color:#fff;background:var(--ink);
 }
 .pill-btn.host{background:var(--red)}
+.pill-btn.quick{background:var(--blue)}
 .pill-btn.quiet{background:var(--paper-2);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--line)}
 .pill-btn:disabled{opacity:.5;cursor:default}
 .pill-btn:focus-visible{outline:3px solid var(--gold);outline-offset:2px}

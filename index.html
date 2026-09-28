@@ -94,13 +94,14 @@
       <span class="f-label">Online</span>
       <div class="net">
         <div class="net-row" id="netIdle">
+          <button type="button" class="pill-btn quick" id="quickBtn" hidden>Quick match</button>
           <button type="button" class="pill-btn host" id="hostBtn">Host a game</button>
           <span class="net-or">or</span>
           <input type="text" id="joinCode" class="code-in" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Room code to join">
           <button type="button" class="pill-btn" id="joinBtn">Join</button>
         </div>
         <div class="net-row" id="netRoom" hidden>
-          <span class="net-code-label">Room</span>
+          <span class="net-code-label" id="netCodeLabel">Room</span>
           <b class="net-code" id="netCode">-----</b>
           <button type="button" class="pill-btn" id="copyBtn">Copy invite</button>
           <button type="button" class="pill-btn quiet" id="leaveBtn">Leave</button>
@@ -160,6 +161,7 @@
 </div>
 
 <script src="scene.js"></script>
+<script src="config.js"></script>
 <script src="net.js"></script>
 <script src="game.js"></script>
 </body>

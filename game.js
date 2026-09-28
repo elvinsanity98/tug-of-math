@@ -507,10 +507,15 @@
     nameIn.classList.toggle('blue', isGuest());
 
     const inRoom = on && !!Net.role;
+    const seeking = Net.role === 'seeker' || Net.role === 'matching';
     $('netIdle').hidden = inRoom;
     $('netRoom').hidden = !inRoom;
+    $('quickBtn').hidden = Net.via !== 'supa';
+    $('netCodeLabel').textContent = seeking ? 'Quick match' : 'Room';
+    $('netCode').hidden = seeking;
     $('netCode').textContent = Net.code || '-----';
-    $('copyBtn').hidden = !isHost();
+    $('copyBtn').hidden = !isHost() || Net.quick;
+    $('leaveBtn').textContent = seeking ? 'Cancel' : 'Leave';
     $('hostSettings').disabled = isGuest();
 
     const start = $('startBtn');
@@ -536,6 +541,7 @@
   /* ---------- online: connection events ---------- */
   Net.on('status', (kind, text) => {
     if (kind === 'connecting') { setNetStatus(text); Net.detect().then(showVia); }
+    else if (kind === 'searching') setNetStatus(text);
     else if (kind === 'waiting') {
       G.oppName = '';
       setNetStatus(text === 'left'
@@ -628,6 +634,7 @@
     Net.join(code);
   }
   $('hostBtn').addEventListener('click', () => { Sfx.ensure(); Net.host(); });
+  $('quickBtn').addEventListener('click', () => { Sfx.ensure(); Net.quickMatch(); });
   $('joinBtn').addEventListener('click', doJoin);
   $('leaveBtn').addEventListener('click', () => { Net.leave(); G.oppName = ''; setNetStatus(NET_HINT); refreshMenu(); });
   $('copyBtn').addEventListener('click', () => {
@@ -739,7 +746,10 @@
     const lan = Net.lanUrls;
     $('netVia').textContent = via === 'lan'
       ? `LAN mode, no internet needed. Players on this network open ${lan[0] || 'this server’s address'}.`
-      : 'Internet mode. Both players open this page on any network; one hosts and the other joins with the code.';
+      : via === 'supa'
+        ? 'Internet mode through Supabase. Quick match pairs you with anyone waiting, or share a room code with a friend.'
+        : 'Internet mode. Both players open this page on any network; one hosts and the other joins with the code.';
+    refreshMenu();
     if (!Net.supported()) {
       $('hostBtn').disabled = true; $('joinBtn').disabled = true;
       $('netVia').textContent = 'Online play needs a browser that supports it, such as Chrome, Edge or Firefox.';

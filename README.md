@@ -23,13 +23,23 @@ Open `index.html` in a browser and press **Start the tug**.
 
 ### Internet (anywhere)
 
-The page has to be on the web. The easiest way is GitHub Pages:
+The page has to be on the web. Any static host works; no build step is needed.
 
-1. In this repository go to **Settings → Pages**, choose **Deploy from a branch**, branch `main`, folder `/ (root)`, and save.
-2. After a minute the game is live at `https://<your-user>.github.io/tug-of-math/`.
-3. Both players open that link and pick **LAN / Internet**. One hosts; the other joins with the code, or opens the invite link from **Copy invite**.
+- **Vercel:** vercel.com → **Add New → Project** → import this repository → Framework preset **Other**, leave the build command empty → **Deploy**. Every push to `main` redeploys.
+- **GitHub Pages:** repository **Settings → Pages** → **Deploy from a branch**, branch `main`, folder `/ (root)`.
 
-Internet games connect the two browsers directly (WebRTC through [PeerJS](https://peerjs.com)), so there is no game server to run. A few strict school or office networks block these connections; if joining never finishes, use LAN mode instead.
+Both players open the site and pick **LAN / Internet**. One hosts; the other joins with the code, or opens the invite link from **Copy invite**.
+
+#### Supabase (recommended for internet play)
+
+With Supabase keys in `config.js`, online games run over [Supabase Realtime](https://supabase.com/docs/guides/realtime) and a **Quick match** button appears that pairs you with anyone else waiting.
+
+1. In the Supabase dashboard open your project → **Project Settings → API**.
+2. Copy the **Project URL** and the **anon / publishable** key into `config.js`.
+3. Never put the `service_role` / secret key in `config.js`; the file is public.
+4. No tables or SQL are needed. If connecting fails, open **Realtime → Settings** and make sure public channels are allowed.
+
+Without Supabase keys the game connects the two browsers directly (WebRTC through [PeerJS](https://peerjs.com)). That needs no account, but a few strict school or office networks block it; Supabase or LAN mode avoids the problem.
 
 ## How it works
 
@@ -61,6 +71,7 @@ In online games any of these keys answer for your own side. You can also tap or 
 - `style.css` – layout and theme
 - `scene.js` – canvas renderer: field, characters, rope, particles
 - `game.js` – questions, scoring, computer player, online rules, sound, main loop
-- `net.js` – connection for online play (LAN WebSocket or internet WebRTC)
+- `net.js` – connection for online play (LAN WebSocket, Supabase Realtime, or PeerJS WebRTC) and Quick match
+- `config.js` – Supabase Project URL and anon key for internet play (optional)
 - `server.js` – LAN server with no dependencies: serves the game and relays moves
 - `start-lan-server.bat` – double-click launcher for the LAN server on Windows
