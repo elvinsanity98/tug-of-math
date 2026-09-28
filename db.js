@@ -11,6 +11,7 @@ const DB = (() => {
   // a password-reset link lands here with #...type=recovery (or #error=... when it has expired)
   const landedHash = location.hash;
   const recovering = /type=recovery/.test(landedHash);
+  const fromEmail = /access_token=|type=(signup|recovery|magiclink|invite|email_change)/.test(landedHash);
   const linkError = (/error_description=([^&]+)/.exec(landedHash) || [])[1];
   const BOARDS = {
     wins:    { col: 'wins', asc: false },
@@ -77,7 +78,7 @@ const DB = (() => {
     owned = new Set(['classic']);
   }
   function cleanUrl() {
-    if (recovering || linkError) history.replaceState(null, '', location.pathname + location.search);
+    if (fromEmail || linkError) history.replaceState(null, '', location.pathname + location.search);
   }
   /* Resolves to 'in' (signed in, profile loaded), 'out' (needs to sign in),
      'recovery' (came from a reset link: needs a new password) or 'offline'. */
@@ -117,7 +118,7 @@ const DB = (() => {
   }
   async function signUp(name, mail, password) {
     const sb = await client();
-    const { data, error } = await sb.auth.signUp({ email: mail, password, options: { data: { display_name: name } } });
+    const { data, error } = await sb.auth.signUp({ email: mail, password, options: { data: { display_name: name }, emailRedirectTo: location.origin + location.pathname } });
     if (error) throw authError(error);
     if (!data.session) return 'confirm';       // "Confirm email" is on in Supabase
     await refresh(data.user);
