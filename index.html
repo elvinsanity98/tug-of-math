@@ -142,6 +142,7 @@
 
     <button class="go" id="startBtn" type="button">Start the tug</button>
     <p class="fine" id="menuFine">Red: A S D F &nbsp;·&nbsp; Blue: J K L ; &nbsp;·&nbsp; or tap. Enter starts.</p>
+    <button class="pill-btn quiet board-btn" id="boardBtn" type="button" hidden>Leaderboard</button>
   </div>
 </div>
 
@@ -154,6 +155,7 @@
       <thead><tr><th></th><th class="kr" id="resNameL">Red</th><th class="kb" id="resNameR">Blue</th></tr></thead>
       <tbody id="resBody"></tbody>
     </table>
+    <p class="res-saved" id="resSaved" hidden><span id="resSavedText"></span> <button class="link-btn" id="resBoardBtn" type="button">See the leaderboard</button></p>
     <div class="res-actions">
       <button class="go" id="againBtn" type="button">Rematch</button>
       <button class="ghost" id="setBtn" type="button">Change settings</button>
@@ -161,8 +163,27 @@
   </div>
 </div>
 
+<div class="overlay" id="board" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="boardTitle">
+    <h2 class="res-title" id="boardTitle">Leaderboard</h2>
+    <div class="seg board-tabs" role="radiogroup" aria-label="Rank players by">
+      <input type="radio" name="board" id="board-wins" value="wins" checked><label for="board-wins">Wins</label>
+      <input type="radio" name="board" id="board-streak" value="streak"><label for="board-streak">Best streak</label>
+      <input type="radio" name="board" id="board-answers" value="answers"><label for="board-answers">Right answers</label>
+      <input type="radio" name="board" id="board-fastest" value="fastest"><label for="board-fastest">Fastest</label>
+    </div>
+    <table class="stats board" id="boardTable" hidden>
+      <thead><tr><th>#</th><th>Player</th><th id="boardCol">Wins</th><th>Games</th></tr></thead>
+      <tbody id="boardBody"></tbody>
+    </table>
+    <p class="board-note" id="boardNote" aria-live="polite"></p>
+    <button class="ghost" id="boardClose" type="button">Back</button>
+  </div>
+</div>
+
 <script src="scene.js"></script>
 <script src="config.js"></script>
+<script src="db.js"></script>
 <script src="net.js"></script>
 <script src="game.js"></script>
 </body>

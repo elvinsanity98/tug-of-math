@@ -10,7 +10,6 @@ const Net = (() => {
     'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js',
     'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
   ];
-  const SUPA_SRC = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js';
   const ID_PREFIX = 'tug-of-math-v1-';
   const CHANNEL_PREFIX = 'tug-of-math-v1';
   const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -159,15 +158,9 @@ const Net = (() => {
       return { id, role: m.role, at: Number(m.at) || 0 };
     });
   }
+  // one client for the whole page, shared with db.js (accounts + leaderboard)
   async function supaClient() {
-    if (sb) return sb;
-    if (!(window.supabase && window.supabase.createClient)) {
-      try { await loadScript(SUPA_SRC); } catch (e) { /* reported below */ }
-    }
-    if (!(window.supabase && window.supabase.createClient)) throw new Error('Could not load online play. Check the internet connection.');
-    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
+    if (!sb) sb = await DB.client();
     return sb;
   }
   function dropChannel(ch) {

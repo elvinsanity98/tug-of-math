@@ -1,4 +1,5 @@
-# LAN-only files. On Vercel the game is plain static files; without this,
-# Vercel treats server.js as a Node backend and CSS/JS come back 404.
+# Files the website does not need. server.js must stay out: Vercel would
+# treat it as a Node backend and the CSS/JS would come back 404.
 server.js
 start-lan-server.bat
+supabase/

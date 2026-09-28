@@ -352,6 +352,7 @@
     applyNames();
     resetRound();
     $('menu').hidden = true; $('result').hidden = true;
+    closeBoard(false);        // an online guest may still be looking at it when the host starts
     refreshMenu();
   }
   function runCountdown(onGo) {
@@ -413,6 +414,7 @@
       Sfx.tie();
     }
     refreshMenu();
+    saveResult(w);
     later(() => showResult(w, why), 1900);
   }
   function showResult(w, why) {
@@ -474,6 +476,86 @@
       showQuestion(k, buildQuestion());
       ui[k].panel.classList.add('idle');
     }
+  }
+
+  /* ---------- saved results: vs computer and internet games go on the leaderboard ---------- */
+  function saveResult(w) {
+    const note = $('resSaved'), text = $('resSavedText');
+    note.hidden = !DB.configured || !(settings.mode === 'cpu' || (online() && Net.via === 'supa'));
+    if (note.hidden) return;
+    note.className = 'res-saved';
+    text.textContent = 'Saving to the leaderboard…';
+    const k = mySide(), s = G.sides[k];
+    DB.saveResult({
+      p_mode: settings.mode, p_op: settings.op, p_diff: settings.diff, p_round_secs: settings.time,
+      p_cpu_level: settings.mode === 'cpu' ? settings.cpu : null,
+      p_outcome: !w ? 'draw' : (w < 0) === (k === 'L') ? 'win' : 'loss',
+      p_correct: s.correct, p_wrong: s.wrong, p_best_streak: s.best,
+      p_fastest_ms: s.fastest === Infinity ? null : Math.round(s.fastest * 1000),
+      p_elapsed_secs: Math.round(G.elapsed * 100) / 100,
+    }, clean($('nameInL').value)).then(ok => {
+      note.className = 'res-saved' + (ok ? ' ok' : '');
+      text.textContent = ok ? 'Saved to your stats.' : 'This round could not be saved.';
+    });
+  }
+
+  /* ---------- leaderboard ---------- */
+  const BOARD_COL = {
+    wins: ['Wins', p => p.wins],
+    streak: ['Best streak', p => p.best_streak],
+    answers: ['Right answers', p => p.total_correct],
+    fastest: ['Fastest', p => (p.fastest_ms / 1000).toFixed(2) + ' s'],
+  };
+  let boardReq = 0, boardReturn = null;
+  function openBoard() {
+    boardReturn = document.activeElement;
+    $('board').hidden = false;
+    document.querySelector('input[name="board"]:checked').focus({ preventScroll: true });
+    loadBoard();
+  }
+  function closeBoard(restoreFocus = true) {
+    if ($('board').hidden) return;
+    $('board').hidden = true;
+    boardReq++;
+    if (restoreFocus && boardReturn && boardReturn.focus) boardReturn.focus({ preventScroll: true });
+    boardReturn = null;
+  }
+  async function loadBoard() {
+    const req = ++boardReq, board = radio('board');
+    const [label, value] = BOARD_COL[board];
+    const note = $('boardNote');
+    note.className = 'board-note';
+    note.textContent = 'Loading…';
+    $('boardCol').textContent = label;
+    let res;
+    try { res = await DB.leaderboard(board); }
+    catch (e) {
+      if (req !== boardReq) return;
+      $('boardTable').hidden = true;
+      note.className = 'board-note err';
+      note.textContent = 'Could not load the leaderboard. Check the internet connection.';
+      return;
+    }
+    if (req !== boardReq) return;         // a newer tab was picked, or the board was closed
+    const body = $('boardBody');
+    body.innerHTML = '';
+    res.rows.forEach((p, i) => {
+      const tr = document.createElement('tr');
+      if (res.me && p.id === res.me.id) tr.className = 'me';
+      for (const v of [i + 1, p.display_name, value(p), p.games_played]) {
+        const td = document.createElement('td');
+        td.textContent = v;
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    });
+    $('boardTable').hidden = !res.rows.length;
+    const me = res.me && res.me.games_played ? res.me : null;
+    note.textContent = me
+      ? `You: ${me.wins} win${me.wins === 1 ? '' : 's'} in ${me.games_played} game${me.games_played === 1 ? '' : 's'} · best streak ${me.best_streak}.`
+      : res.rows.length
+        ? 'Play vs the computer or online to get on the board.'
+        : 'No scores yet. Play vs the computer or online to get on the board.';
   }
 
   /* ---------- menu attract mode: the teams tug on their own ---------- */
@@ -657,6 +739,7 @@
   /* ---------- keyboard ---------- */
   document.addEventListener('keydown', e => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!$('board').hidden) { if (e.key === 'Escape') closeBoard(); return; }
     const active = document.activeElement;
     const tag = active && active.tagName;
     if (e.key === 'Enter' && tag !== 'BUTTON') {
@@ -681,6 +764,11 @@
   $('againBtn').addEventListener('click', startGame);
   $('setBtn').addEventListener('click', () => openMenu());
   $('menuBtn').addEventListener('click', () => openMenu());
+  $('boardBtn').addEventListener('click', openBoard);
+  $('resBoardBtn').addEventListener('click', openBoard);
+  $('boardClose').addEventListener('click', () => closeBoard());
+  $('board').addEventListener('click', e => { if (e.target === $('board')) closeBoard(); });
+  document.querySelectorAll('input[name="board"]').forEach(r => r.addEventListener('change', loadBoard));
   $('soundBtn').addEventListener('click', () => {
     Sfx.ensure();
     const muted = Sfx.toggle();
@@ -733,6 +821,7 @@
     $('joinCode').value = hashJoin[1].toUpperCase();
   }
   readSettings();
+  $('boardBtn').hidden = !DB.configured;
   setNetStatus(hashJoin ? `Type your name, then press Join to enter game ${hashJoin[1].toUpperCase()}.` : NET_HINT);
   applyNames();
   refreshMenu();

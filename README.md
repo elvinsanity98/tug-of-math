@@ -37,7 +37,16 @@ With Supabase keys in `config.js`, online games run over [Supabase Realtime](htt
 1. In the Supabase dashboard open your project → **Project Settings → API**.
 2. Copy the **Project URL** and the **anon / publishable** key into `config.js`.
 3. Never put the `service_role` / secret key in `config.js`; the file is public.
-4. No tables or SQL are needed. If connecting fails, open **Realtime → Settings** and make sure public channels are allowed.
+4. If connecting fails, open **Realtime → Settings** and make sure public channels are allowed.
+
+#### Leaderboard and saved stats
+
+Vs-computer and internet games are saved to a Supabase database and ranked on the **Leaderboard** (menu button). Players get an anonymous account the first time a result is saved, so no email is needed; the stats stay with that browser. Same PC and LAN games are not saved.
+
+1. **Authentication → Sign In / Providers** → turn on **Allow anonymous sign-ins**.
+2. **SQL Editor → New query** → paste `supabase/schema.sql` → **Run**. It creates the `profiles` and `game_results` tables, their row-level security, and the `submit_result` function that saves a round.
+
+To remove a player, delete the user under **Authentication → Users**; their profile and results go with it.
 
 Without Supabase keys the game connects the two browsers directly (WebRTC through [PeerJS](https://peerjs.com)). That needs no account, but a few strict school or office networks block it; Supabase or LAN mode avoids the problem.
 
@@ -72,6 +81,8 @@ In online games any of these keys answer for your own side. You can also tap or 
 - `scene.js` – canvas renderer: field, characters, rope, particles
 - `game.js` – questions, scoring, computer player, online rules, sound, main loop
 - `net.js` – connection for online play (LAN WebSocket, Supabase Realtime, or PeerJS WebRTC) and Quick match
+- `db.js` – player accounts, saved results and the leaderboard through Supabase
 - `config.js` – Supabase Project URL and anon key for internet play (optional)
+- `supabase/schema.sql` – database tables and rules for the leaderboard
 - `server.js` – LAN server with no dependencies: serves the game and relays moves
 - `start-lan-server.bat` – double-click launcher for the LAN server on Windows
