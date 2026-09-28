@@ -8,6 +8,6 @@
 
    NEVER put the service_role / secret key here. This file is public on the web. */
 window.TUG_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://irtnucbqbkddvrqbiaru.supabase.co',
+  supabaseAnonKey: 'sb_publishable_jZsZg8jId_AwSA1LMliBvg_kpGwxNwS',
 };

@@ -41,7 +41,7 @@ const Net = (() => {
   }
   async function runDetect() {
     let lan = false;
-    if (location.protocol === 'http:' || location.protocol === 'https:') {
+    if (location.protocol === 'http:') {        // server.js only speaks plain http
       try {
         const ctl = new AbortController();
         const t = setTimeout(() => ctl.abort(), 6000);
