@@ -13,6 +13,7 @@
   const RANKED_SETTINGS = { op: 'mix', diff: 'medium', time: 90 };
   const BOT_SKINS = ['classic', 'cap', 'shades', 'cat', 'pirate', 'ninja', 'viking', 'wizard'];
   const MODE_NAME = { classic: 'Classic', ranked: 'Ranked', custom: 'Custom' };
+  const QSET_KEY = 'tug-of-math-questions';
 
   let me = null;            // the player's profile (DB.profile)
   let ready = null;         // DB.init() in flight
@@ -37,7 +38,7 @@
     document.body.dataset.screen = screen;
     if (changed) window.scrollTo(0, 0);
   }
-  function closeOverlays() { for (const id of ['classicSheet', 'searchSheet', 'lobby', 'result']) $(id).hidden = true; }
+  function closeOverlays() { for (const id of ['classicSheet', 'searchSheet', 'lobby', 'result', 'qEditor']) $(id).hidden = true; }
   function sizeCanvas(cv) {
     const r = cv.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
@@ -484,7 +485,9 @@
     show('match');
     const size = Math.max(...['L', 'R'].map(k => cfg.players.filter(p => p.side === k).length));
     const kindName = cfg.kind === 'local' ? 'Same PC' : cfg.kind === 'cpu' ? 'Vs computer' : MODE_NAME[cfg.mode];
-    $('matchMode').textContent = `${kindName} · ${size}v${size}`;
+    const isRef = !!cfg.referee && cfg.referee === cfg.me;
+    $('matchMode').textContent = `${kindName} · ${size}v${size}${isRef ? ' · you are the referee' : ''}`;
+    $('refTools').hidden = !isRef;
     Game.start(cfg);
   }
 
@@ -537,13 +540,16 @@
     if (mode === 'ranked' && !DB.online) { toast('Ranked needs an internet connection.', true); return; }
     if (!DB.configured) { toast('Online play needs Supabase keys in config.js.', true); return; }
     closeOverlays();
-    Q = { mode, size, settings: mode === 'ranked' ? RANKED_SETTINGS : settings };
+    const ranked = mode === 'ranked';
+    Q = { mode, size, settings: ranked ? RANKED_SETTINGS : settings };
     $('searchMode').textContent = `${MODE_NAME[mode]} · ${size}v${size}`;
     $('searchTitle').textContent = 'Finding players…';
     $('searchCount').textContent = `1 / ${size * 2} players`;
-    $('searchNote').textContent = `If nobody turns up in about ${QUICK_WAIT[size] / 1000} seconds, computer players fill the empty spots.`;
+    $('searchNote').textContent = ranked
+      ? `Ranked only matches real players, never the computer. The match starts once ${size * 2} players are ready.`
+      : `If nobody turns up in about ${QUICK_WAIT[size] / 1000} seconds, computer players fill the empty spots.`;
     $('searchSheet').hidden = false;
-    Net.quickMatch(mode + size, size * 2, QUICK_WAIT[size], { name: me.display_name, stars: me.rank_stars });
+    Net.quickMatch(mode + size, size * 2, ranked ? Infinity : QUICK_WAIT[size], { name: me.display_name, stars: me.rank_stars });
   }
   $('rankedBtn').addEventListener('click', () => { Sfx.click(); quick('ranked', +radio('rankedSize')); });
   $('searchCancel').addEventListener('click', () => { Q = null; Net.leave(); $('searchSheet').hidden = true; });
@@ -558,7 +564,10 @@
         const side = i % 2 === 0 ? 'L' : 'R';
         R.players.push(id === Net.myId ? mePlayer(id, side) : { id, name: 'Joining…', side, pending: true });
       });
-      R.autoTimer = setTimeout(startRoomMatch, 7000);
+      // Classic fills no-shows with computers; Ranked sends everyone back to searching
+      R.autoTimer = R.mode === 'ranked'
+        ? setTimeout(() => { if (R && R.players.some(p => p.pending)) requeueAll(); else startRoomMatch(); }, 10000)
+        : setTimeout(startRoomMatch, 7000);
       maybeStartQuick();
     } else {
       sayHello();
@@ -571,6 +580,7 @@
     return Object.assign({
       mode: 'custom', size: 1, quick: false, host: false, code: '', players: [], expected: [],
       sizes: { L: o.size || 1, R: o.size || 1 }, fill: 'medium', settings: { op: 'mix', diff: 'easy', time: 90 },
+      referee: null, qsource: 'math', qset: [], qcount: 0, sentQset: false,
       inMatch: false, autoTimer: 0, helloTimer: 0, rosterTimer: 0,
     }, o);
   }
@@ -623,6 +633,7 @@
       if (p.id === Net.myId || present.has(p.id)) continue;
       if (p.pending && R.quick) continue;          // invited, still on the way
       R.players = R.players.filter(x => x !== p);
+      if (p.id === R.referee) { R.referee = null; R.qset = []; }
       if (R.inMatch) Game.playerLeft(p.id);
     }
     sendRoster();
@@ -665,12 +676,43 @@
     R.rosterTimer = setTimeout(() => {
       if (!R) return;
       Net.send({ t: 'roster', mode: R.mode, quick: R.quick, size: R.size, sizes: R.sizes, fill: R.fill, settings: R.settings, inMatch: R.inMatch,
+        referee: R.referee, qsource: R.qsource, qcount: R.qset.length,
         players: R.players.map(p => ({ id: p.id, name: p.name, side: p.side, skin: p.skin, look: p.look, stars: p.stars, pending: !!p.pending })) });
     }, 60);
   }
+  const growSide = () => (R.sizes.L < 5 ? (R.sizes.L++, 'L') : R.sizes.R < 5 ? (R.sizes.R++, 'R') : 'L');
+  // host: one player can be the referee; they leave their team and write the questions
+  function makeReferee(id) {
+    const p = R.players.find(x => x.id === id);
+    if (!p || R.inMatch) return;
+    const old = R.players.find(x => x.side === 'ref');
+    if (old && old !== p) old.side = freeSide() || growSide();
+    p.side = 'ref';
+    R.referee = id;
+    R.qset = id === Net.myId ? loadQset() : [];
+    sendRoster(); renderLobby();
+  }
+  function clearReferee() {
+    const p = R.players.find(x => x.side === 'ref');
+    if (p) p.side = freeSide() || growSide();
+    R.referee = null; R.qset = [];
+    sendRoster(); renderLobby();
+  }
+  // ranked never fills with computers: if someone matched never arrives, everyone searches again
+  function requeueAll() {
+    if (!R || !R.host) return;
+    Net.send({ t: 'requeue' });
+    const q = Q;
+    setTimeout(() => { leaveQuiet(); if (q) quick(q.mode, q.size, q.settings); }, 300);
+  }
+  function leaveQuiet() {
+    if (R) { clearTimeout(R.autoTimer); clearInterval(R.helloTimer); }
+    Net.leave();
+    R = null;
+  }
   function movePlayer(id) {
     const p = R.players.find(x => x.id === id);
-    if (!p) return;
+    if (!p || p.side === 'ref') return;
     const to = p.side === 'L' ? 'R' : 'L';
     const count = R.players.filter(x => x.side === to).length;
     if (count >= R.sizes[to]) {
@@ -686,26 +728,30 @@
     if (!R || !R.host || R.inMatch) return;
     clearTimeout(R.autoTimer);
     const ranked = R.mode === 'ranked';
-    const humans = R.players.filter(p => !p.pending);
-    const avgStars = humans.reduce((a, p) => a + (p.stars || 0), 0) / Math.max(1, humans.length);
-    const level = R.quick ? (ranked ? Catalog.rankBot(avgStars) : 'medium') : R.fill;
+    if (ranked && R.players.some(p => p.pending)) { requeueAll(); return; }
+    const humans = R.players.filter(p => !p.pending && p.side !== 'ref');
+    const level = ranked ? 'none' : R.quick ? 'medium' : R.fill;      // ranked: real players only
     const used = new Set(humans.map(p => p.name));
     let players = humans.map(p => ({ id: p.id, name: p.name, side: p.side, skin: p.skin, look: p.look, stars: p.stars,
       diff: ranked ? Catalog.rankDiff(p.stars) : undefined }));
     for (const k of ['L', 'R']) {
       const need = R.sizes[k] - players.filter(p => p.side === k).length;
-      if (need > 0 && level !== 'none') {
-        players = players.concat(makeBots(need, k, level, used).map(b => Object.assign(b, { diff: ranked ? Catalog.rankDiff(avgStars) : undefined })));
-      }
+      if (need > 0 && level !== 'none') players = players.concat(makeBots(need, k, level, used));
     }
     if (!players.some(p => p.side === 'L') || !players.some(p => p.side === 'R')) {
       $('lobbyStatus').textContent = 'Each side needs at least one player. Add computer players or move someone across.';
       return;
     }
+    let questions = null;
+    if (!R.quick && R.qsource === 'ref') {
+      if (!R.referee) { $('lobbyStatus').textContent = 'Pick a referee with ⚑ first, or set Questions to Math.'; return; }
+      questions = R.qset.map(Game.cleanQuestion).filter(Boolean);
+      if (!questions.length) { $('lobbyStatus').textContent = 'The referee has not written any questions yet.'; return; }
+    }
     const settings = R.quick ? R.settings : lobbySettings();
     R.settings = settings;
     R.inMatch = true;
-    const cfg = { mode: R.mode, kind: 'online', settings, players };
+    const cfg = { mode: R.mode, kind: 'online', settings, players, referee: R.quick ? null : R.referee, questions };
     Net.send({ t: 'start', cfg });
     sendRoster();
     startMatch(Object.assign({}, cfg, { host: true, me: Net.myId }));
@@ -719,13 +765,26 @@
       case 'side': if (R.host && !R.quick && !R.inMatch) movePlayer(from); break;
       case 'roster':
         if (R.host || !fromHost) return;
-        Object.assign(R, { mode: m.mode, quick: !!m.quick, size: m.size, sizes: m.sizes || R.sizes, fill: m.fill, settings: m.settings || R.settings, inMatch: !!m.inMatch });
+        Object.assign(R, { mode: m.mode, quick: !!m.quick, size: m.size, sizes: m.sizes || R.sizes, fill: m.fill, settings: m.settings || R.settings, inMatch: !!m.inMatch,
+          referee: m.referee || null, qsource: m.qsource === 'ref' ? 'ref' : 'math', qcount: m.qcount | 0 });
         R.players = Array.isArray(m.players) ? m.players.slice(0, 10) : [];
+        // just made referee: hand the host the questions saved in this browser
+        if (R.referee === Net.myId && !R.sentQset) { R.sentQset = true; Net.send({ t: 'qset', qs: loadQset() }); }
+        if (R.referee !== Net.myId) R.sentQset = false;
         renderLobby();
+        break;
+      case 'qset':
+        if (!R.host || from !== R.referee || !Array.isArray(m.qs)) return;
+        R.qset = m.qs.slice(0, 60).map(Game.cleanQuestion).filter(Boolean);
+        sendRoster(); renderLobby();
+        break;
+      case 'requeue':
+        if (R.host || !fromHost || !R.quick) return;
+        { const q = Q; leaveQuiet(); if (q) { toast('Someone did not connect. Searching again…'); quick(q.mode, q.size, q.settings); } }
         break;
       case 'start':
         if (R.host || !fromHost || !m.cfg || !Array.isArray(m.cfg.players)) return;
-        if (!m.cfg.players.some(p => p.id === Net.myId)) { $('lobbyStatus').textContent = 'A match is on. You will join the next one.'; return; }
+        if (!m.cfg.players.some(p => p.id === Net.myId) && m.cfg.referee !== Net.myId) { $('lobbyStatus').textContent = 'A match is on. You will join the next one.'; return; }
         R.inMatch = true;
         startMatch(Object.assign({}, m.cfg, { host: false, me: Net.myId }));
         break;
@@ -744,14 +803,20 @@
     }
   }
   Net.on('message', (m, from) => {
-    if (!m || typeof m.t !== 'string') return;    if (Game.handles(m.t)) Game.onNet(m, from);
+    if (!m || typeof m.t !== 'string') return;
+    if (Game.handles(m.t)) Game.onNet(m, from);
     else lobbyMessage(m, from);
   });
   Net.on('status', (kind, info) => {
     if (kind === 'searching') {
       $('searchCount').textContent = `${Math.min(info.found, info.need)} / ${info.need} players`;
-      const left = Math.max(0, Math.ceil(((Q ? QUICK_WAIT[Q.size] : 0) - info.waited) / 1000));
-      $('searchTitle').textContent = info.found >= info.need ? 'Match found!' : left > 0 ? `Finding players… ${left}` : 'Filling with computer players…';
+      if (Q && Q.mode === 'ranked') {
+        const sec = Math.floor(info.waited / 1000);
+        $('searchTitle').textContent = info.found >= info.need ? 'Match found!' : `Finding players… ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+      } else {
+        const left = Math.max(0, Math.ceil(((Q ? QUICK_WAIT[Q.size] : 0) - info.waited) / 1000));
+        $('searchTitle').textContent = info.found >= info.need ? 'Match found!' : left > 0 ? `Finding players… ${left}` : 'Filling with computer players…';
+      }
     } else if (kind === 'connecting') {
       $('searchTitle').textContent = info;
     } else if (kind === 'fell') {
@@ -781,6 +846,7 @@
     $('lobby').hidden = false;
     if (R && R.host && !R.quick) {
       setRadio('fill', R.fill); setRadio('lop', R.settings.op); setRadio('ldiff', R.settings.diff); setRadio('ltime', R.settings.time);
+      setRadio('qsrc', R.qsource);
     }
     renderLobby();
   }
@@ -795,7 +861,17 @@
     $('lobbySettings').disabled = !R.host;
     if (!R.host && custom) {
       setRadio('fill', R.fill); setRadio('lop', R.settings.op); setRadio('ldiff', R.settings.diff); setRadio('ltime', R.settings.time);
+      setRadio('qsrc', R.qsource);
     }
+    // referee
+    const ref = R.players.find(p => p.side === 'ref');
+    const qn = R.host ? R.qset.length : R.qcount;
+    $('refRow').hidden = !custom;
+    $('refName').textContent = ref
+      ? `${ref.name}${ref.id === Net.myId ? ' (you)' : ''} · ${R.qsource === 'ref' ? `${qn} question${qn === 1 ? '' : 's'} ready` : 'Questions are set to Math'}`
+      : R.host ? 'None. Tap ⚑ next to a player (or yourself) to make them referee.' : 'None';
+    $('refQBtn').hidden = !(ref && ref.id === Net.myId && !R.inMatch);
+    $('refClear').hidden = !(ref && R.host && !R.inMatch);
     for (const k of ['L', 'R']) {
       const side = R.players.filter(p => p.side === k);
       // team size picker (host of a custom room)
@@ -827,13 +903,18 @@
         const rk = document.createElement('span'); rk.className = 'slot-rank';
         if (p.stars != null && !p.pending) rk.innerHTML = Catalog.badge(p.stars, { ribbon: false, animate: false });
         li.append(cv, name, rk);
-        if (custom && R.host && !R.inMatch) {
+        if (custom && R.host && !R.inMatch && !p.pending) {
+          const f = document.createElement('button');
+          f.type = 'button'; f.className = 'swap flag'; f.textContent = '⚑';
+          f.title = `Make ${p.name} the referee`;
+          f.setAttribute('aria-label', f.title);
+          f.onclick = () => makeReferee(p.id);
           const b = document.createElement('button');
           b.type = 'button'; b.className = 'swap'; b.textContent = '⇄';
           b.title = `Move ${p.name} to ${k === 'L' ? 'Blue' : 'Red'}`;
           b.setAttribute('aria-label', b.title);
           b.onclick = () => movePlayer(p.id);
-          li.appendChild(b);
+          li.append(f, b);
         }
         ol.appendChild(li);
         if (!p.pending) renderAvatar(cv, p.skin || 'classic', p.look || 0, 0.6, 'stand', 'bust');
@@ -849,11 +930,12 @@
     const start = $('lobbyStart');
     start.hidden = !(R.host && custom);
     start.disabled = R.inMatch;
-    $('lobbySwitch').hidden = !custom || R.inMatch;
+    $('lobbySwitch').hidden = !custom || R.inMatch || (ref && ref.id === Net.myId);
     const st = $('lobbyStatus');
     if (R.quick) st.textContent = R.host ? 'Waiting for everyone to connect… computer players fill any gaps.' : 'Waiting for the host to start…';
     else if (R.inMatch) st.textContent = 'A match is on. You will join the next one.';
-    else if (R.host) st.textContent = R.players.length > 1 ? 'Move players with ⇄, pick team sizes, then Start.' : 'Share the code. Friends join from Custom → Join.';
+    else if (R.host && R.qsource === 'ref' && !ref) st.textContent = 'Questions are set to Referee\'s: pick a referee with ⚑.';
+    else if (R.host) st.textContent = R.players.length > 1 ? 'Move players with ⇄, pick a referee with ⚑, choose team sizes, then Start.' : 'Share the code. Friends join from Custom → Join.';
     else st.textContent = R.players.some(p => p.id === Net.myId) ? 'Waiting for the host to start…' : 'Joining…';
   }
   $('lobbyStart').addEventListener('click', () => {
@@ -864,9 +946,111 @@
   $('lobbyLeave').addEventListener('click', () => { leaveRoom(); });
   document.querySelectorAll('#lobbySettings input').forEach(r => r.addEventListener('change', () => {
     if (!R || !R.host) return;
-    R.fill = radio('fill'); R.settings = lobbySettings();
+    R.fill = radio('fill'); R.settings = lobbySettings(); R.qsource = radio('qsrc');
     sendRoster(); renderLobby();
   }));
+  $('refClear').addEventListener('click', () => { if (R && R.host) clearReferee(); });
+  $('refQBtn').addEventListener('click', () => openEditor('set'));
+
+  /* ---------- referee question editor ---------- */
+  let qeMode = 'set', myQset = [];
+  function loadQset() {
+    try {
+      const a = JSON.parse(localStorage.getItem(QSET_KEY) || '[]');
+      return Array.isArray(a) ? a.map(Game.cleanQuestion).filter(Boolean).slice(0, 60) : [];
+    } catch (e) { return []; }
+  }
+  function saveQset(a) { try { localStorage.setItem(QSET_KEY, JSON.stringify(a)); } catch (e) { /* storage blocked */ } }
+  function qeMsg(text, bad) { const m = $('qeMsg'); m.textContent = text || ''; m.className = 'auth-msg' + (bad ? ' bad' : ''); }
+  // mode: 'set' (write the room's questions) or 'live' (send one during a match)
+  function openEditor(mode) {
+    qeMode = mode;
+    myQset = loadQset();
+    const live = mode === 'live';
+    $('qeEyebrow').textContent = live ? 'Referee · live' : 'Referee';
+    $('qeTitle').textContent = live ? 'Send a question' : 'Your questions';
+    $('qeLede').textContent = live
+      ? 'It comes up next for every player.'
+      : 'Players get these in random order. Any subject works, not just math. They stay saved in this browser for next time.';
+    $('qeAdd').textContent = live ? 'Send to players' : 'Add question';
+    $('qeList').hidden = live;
+    syncQeType(); renderQeList(); qeMsg('');
+    $('qEditor').hidden = false;
+    $('qeText').focus();
+  }
+  function syncQeType() {
+    const t = radio('qtype');
+    $('qeMc').hidden = t !== 'mc'; $('qeTf').hidden = t !== 'tf'; $('qeTypeRow').hidden = t !== 'type';
+  }
+  document.querySelectorAll('input[name="qtype"]').forEach(r => r.addEventListener('change', syncQeType));
+  function readQe() {
+    const type = radio('qtype'), text = $('qeText').value;
+    if (type === 'mc') {
+      const opts = [0, 1, 2, 3].map(i => $('qeOpt' + i).value.trim());
+      return { text, type, options: opts.filter(Boolean), answer: opts[+radio('qeRight')] };
+    }
+    if (type === 'tf') return { text, type, answer: radio('qeTF') };
+    return { text, type, answer: $('qeAns').value };
+  }
+  function qeProblem(q) {
+    if (!q.text.trim()) return 'Write the question first.';
+    if (q.type === 'mc') {
+      if (q.options.length < 2) return 'Add at least two choices.';
+      if (!q.answer) return 'Tick the right choice (it cannot be empty).';
+      if (new Set(q.options.map(o => o.toLowerCase())).size !== q.options.length) return 'Each choice must be different.';
+    }
+    if (q.type === 'type' && !q.answer.trim()) return 'Type the right answer.';
+    return null;
+  }
+  function clearQe() {
+    $('qeText').value = ''; $('qeAns').value = '';
+    for (let i = 0; i < 4; i++) $('qeOpt' + i).value = '';
+    setRadio('qeRight', '0');
+    $('qeText').focus();
+  }
+  const TYPE_TAG = { mc: 'Choice', tf: 'T / F', type: 'Typed' };
+  function renderQeList() {
+    const ol = $('qeList');
+    ol.innerHTML = '';
+    if (qeMode === 'live') return;
+    if (!myQset.length) { ol.innerHTML = '<li class="qe-empty">No questions yet. Add a few above.</li>'; return; }
+    myQset.forEach((q, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="qe-type">${TYPE_TAG[q.type]}</span><span class="qe-q"><b>${esc(q.text)}</b><small>Answer: ${esc(q.answer)}${q.type === 'mc' ? ' · choices: ' + q.options.map(esc).join(', ') : ''}</small></span>`;
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'swap'; del.textContent = '✕';
+      del.setAttribute('aria-label', 'Remove this question');
+      del.onclick = () => { myQset.splice(i, 1); saveQset(myQset); renderQeList(); pushQset(); };
+      li.appendChild(del);
+      ol.appendChild(li);
+    });
+  }
+  function pushQset() {
+    if (!R || R.referee !== Net.myId) return;
+    if (R.host) { R.qset = myQset.slice(); sendRoster(); renderLobby(); }
+    else Net.send({ t: 'qset', qs: myQset });
+  }
+  $('qeForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const raw = readQe(), problem = qeProblem(raw);
+    if (problem) { qeMsg(problem, true); return; }
+    const q = Game.cleanQuestion(raw);
+    if (!q) { qeMsg('That question does not look right. Check the answer.', true); return; }
+    if (qeMode === 'live') {
+      if (Game.refAdd(q)) { qeMsg('Sent! It comes up next for every player.'); clearQe(); }
+      else qeMsg('The match is already over.', true);
+      return;
+    }
+    if (myQset.length >= 60) { qeMsg('That is the limit: 60 questions.', true); return; }
+    myQset.push(q); saveQset(myQset);
+    clearQe(); renderQeList(); pushQset();
+    qeMsg(`Added. ${myQset.length} question${myQset.length === 1 ? '' : 's'} ready.`);
+  });
+  $('qeClose').addEventListener('click', () => { $('qEditor').hidden = true; renderLobby(); });
+  $('refAddBtn').addEventListener('click', () => openEditor('live'));
+  $('refEndBtn').addEventListener('click', () => {
+    if (confirm('End the match now? The side holding more of the rope wins.')) Game.refWhistle();
+  });
   $('copyBtn').addEventListener('click', () => {
     const link = Net.inviteLink(R ? R.code : '');
     const done = () => { $('copyBtn').textContent = 'Copied'; setTimeout(() => { $('copyBtn').textContent = 'Copy invite'; }, 1400); };
@@ -884,8 +1068,23 @@
 
   /* ============ in-match controls ============ */
   $('quitBtn').addEventListener('click', () => {
-    const online = Game.cfg && Game.cfg.kind === 'online';
-    if (Game.state === 'play' && !confirm(online ? 'Leave this match? You will not get a result for it.' : 'Leave this match?')) return;
+    const cfg = Game.cfg, online = cfg && cfg.kind === 'online';
+    const ranked = online && cfg.mode === 'ranked' && Game.state === 'play' && !Game.isRef;
+    const ask = ranked ? 'Leave this ranked match? It counts as a loss.' : online ? 'Leave this match? You will not get a result for it.' : 'Leave this match?';
+    if ((Game.state === 'play' || Game.state === 'ready') && !confirm(ask)) return;
+    if (ranked) {
+      const sum = Game.snapshot(0, 'left');
+      const mine = sum && sum.players.find(p => p.local);
+      if (mine && DB.online) {
+        sum.w = mine.side === 'L' ? 1 : -1;          // the other side takes the win
+        saveResult(sum, mine).then(res => {
+          if (!res) return;
+          me = DB.profile;
+          renderDash();
+          toast(`You left a ranked match: it counts as a loss${res.stars_after < res.stars_before ? ' (−1 star)' : ''}.`, true);
+        });
+      }
+    }
     if (online) leaveRoom();
     else { Game.stop(); closeOverlays(); show('dash'); renderDash(); }
   });
@@ -906,11 +1105,14 @@
     title.textContent = mine && cfg.kind !== 'local'
       ? { win: 'Victory!', loss: 'Defeat', draw: 'Dead heat!' }[outcomeFor(sum, mine.side)]
       : sum.w ? `${winner} wins!` : 'Dead heat!';
-    const opName = { add: 'Adding', sub: 'Subtracting', mul: 'Times tables', div: 'Dividing', mix: 'Mixed' }[sum.settings.op];
+    const opName = cfg.questions && cfg.questions.length ? "Referee's questions"
+      : { add: 'Adding', sub: 'Subtracting', mul: 'Times tables', div: 'Dividing', mix: 'Mixed' }[sum.settings.op];
     $('resEyebrow').textContent = `${$('matchMode').textContent} · ${opName}`;
     $('resSub').textContent = sum.why === 'line'
       ? `${winner} dragged the ribbon over the line in ${Math.round(sum.elapsed)} s.`
-      : sum.w ? `Time's up. ${winner} held more of the rope.` : `Time's up with the ribbon dead centre.`;
+      : sum.why === 'ref'
+        ? (sum.w ? `The referee blew the whistle. ${winner} held more of the rope.` : 'The referee blew the whistle with the ribbon dead centre.')
+        : sum.w ? `Time's up. ${winner} held more of the rope.` : `Time's up with the ribbon dead centre.`;
     renderResultTable(sum);
 
     // buttons
@@ -1057,6 +1259,7 @@
       return;
     }
     if (e.key === 'Escape') {
+      if (!$('qEditor').hidden) { $('qEditor').hidden = true; renderLobby(); return; }
       if (!$('classicSheet').hidden) { $('classicSheet').hidden = true; return; }
       if (!$('searchSheet').hidden) { $('searchCancel').click(); return; }
     }

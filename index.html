@@ -115,7 +115,7 @@
         <article class="mode-card ranked">
           <div class="mode-art" aria-hidden="true" id="rankedArt"></div>
           <h3>Ranked</h3>
-          <p>Win stars to climb five tiers, then Legend. Earns 1.5× coins.</p>
+          <p>Real players only, never the computer. Win stars to climb five tiers, then Legend. Earns 1.5× coins.</p>
           <div class="seg size-seg" role="radiogroup" aria-label="Ranked team size">
             <input type="radio" name="rankedSize" id="rs-1" value="1" checked><label for="rs-1">1v1</label>
             <input type="radio" name="rankedSize" id="rs-5" value="5"><label for="rs-5">5v5</label>
@@ -220,6 +220,7 @@
     <div class="logo"><span class="r">Tug</span> of <span class="b">Math</span></div>
     <div class="match-mode" id="matchMode"></div>
     <div class="tools">
+      <span class="ref-tools" id="refTools" hidden><button class="tool gold" id="refAddBtn" type="button">+ Question</button><button class="tool" id="refEndBtn" type="button">Whistle: end match</button></span>
       <button class="tool" id="matchSound" type="button" aria-pressed="true">Sound: On</button>
       <button class="tool" id="quitBtn" type="button">Leave</button>
     </div>
@@ -235,6 +236,7 @@
         <div class="q-row"><span class="q-label">Solve to pull</span><span class="streak" id="streakL"></span></div>
         <div class="q" id="qL">?</div>
         <div class="answers" id="ansL"></div>
+        <form class="typed" id="typedL" hidden><input type="text" id="typeInL" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Type your answer" aria-label="Your answer"><button class="pill-btn" type="submit">Go</button></form>
         <div class="meter" title="Strength of your last pull"><i id="powL"></i></div>
         <div class="msg" id="msgL">Faster answers pull harder</div>
       </div>
@@ -256,6 +258,7 @@
         <div class="q-row"><span class="q-label">Solve to pull</span><span class="streak" id="streakR"></span></div>
         <div class="q" id="qR">?</div>
         <div class="answers" id="ansR"></div>
+        <form class="typed" id="typedR" hidden><input type="text" id="typeInR" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Type your answer" aria-label="Your answer"><button class="pill-btn" type="submit">Go</button></form>
         <div class="meter" title="Strength of your last pull"><i id="powR"></i></div>
         <div class="msg" id="msgR">Faster answers pull harder</div>
       </div>
@@ -346,6 +349,12 @@
       <b class="net-code" id="lobbyCode">-----</b>
       <button type="button" class="pill-btn" id="copyBtn">Copy invite</button>
     </div>
+    <div class="ref-row" id="refRow">
+      <span class="ref-badge" aria-hidden="true">⚑</span>
+      <span class="ref-text"><b>Referee</b><span id="refName">No referee</span></span>
+      <button type="button" class="pill-btn" id="refQBtn" hidden>Write questions</button>
+      <button type="button" class="pill-btn quiet" id="refClear" hidden>Back to a team</button>
+    </div>
     <div class="teams">
       <div class="team-col red">
         <div class="team-h"><b>Red</b><span class="seg mini" id="sizeL" role="radiogroup" aria-label="Red team size"></span></div>
@@ -357,6 +366,13 @@
       </div>
     </div>
     <fieldset class="host-set" id="lobbySettings">
+      <div class="field">
+        <span class="f-label">Questions</span>
+        <div class="seg" role="radiogroup" aria-label="Where the questions come from">
+          <input type="radio" name="qsrc" id="qsrc-math" value="math" checked><label for="qsrc-math">Math</label>
+          <input type="radio" name="qsrc" id="qsrc-ref" value="ref"><label for="qsrc-ref">Referee's questions</label>
+        </div>
+      </div>
       <div class="field">
         <span class="f-label">Empty spots</span>
         <div class="seg" role="radiogroup" aria-label="Fill empty spots">
@@ -399,6 +415,45 @@
       <button class="ghost" id="lobbySwitch" type="button">Switch side</button>
       <button class="ghost" id="lobbyLeave" type="button">Leave</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ referee question editor ============ -->
+<div class="overlay" id="qEditor" hidden>
+  <div class="card qe-card" role="dialog" aria-modal="true" aria-labelledby="qeTitle">
+    <p class="eyebrow" id="qeEyebrow">Referee</p>
+    <h2 class="res-title" id="qeTitle">Your questions</h2>
+    <p class="lede" id="qeLede">Players get these in random order. Any subject works, not just math.</p>
+    <form class="qe-form" id="qeForm" novalidate>
+      <label class="auth-field"><span>Question</span><textarea id="qeText" maxlength="140" rows="2" placeholder="e.g. What is the capital of Japan?"></textarea></label>
+      <div class="field">
+        <span class="f-label">Answer type</span>
+        <div class="seg" role="radiogroup" aria-label="Answer type">
+          <input type="radio" name="qtype" id="qt-mc" value="mc" checked><label for="qt-mc">Multiple choice</label>
+          <input type="radio" name="qtype" id="qt-tf" value="tf"><label for="qt-tf">True / False</label>
+          <input type="radio" name="qtype" id="qt-type" value="type"><label for="qt-type">Type the answer</label>
+        </div>
+      </div>
+      <fieldset class="qe-mc" id="qeMc">
+        <legend class="f-label">Choices <small>(tick the right one)</small></legend>
+        <label class="qe-opt"><input type="radio" name="qeRight" value="0" checked aria-label="Choice 1 is right"><input type="text" id="qeOpt0" maxlength="40" placeholder="Choice 1"></label>
+        <label class="qe-opt"><input type="radio" name="qeRight" value="1" aria-label="Choice 2 is right"><input type="text" id="qeOpt1" maxlength="40" placeholder="Choice 2"></label>
+        <label class="qe-opt"><input type="radio" name="qeRight" value="2" aria-label="Choice 3 is right"><input type="text" id="qeOpt2" maxlength="40" placeholder="Choice 3 (optional)"></label>
+        <label class="qe-opt"><input type="radio" name="qeRight" value="3" aria-label="Choice 4 is right"><input type="text" id="qeOpt3" maxlength="40" placeholder="Choice 4 (optional)"></label>
+      </fieldset>
+      <div class="field" id="qeTf" hidden>
+        <span class="f-label">Answer</span>
+        <div class="seg" role="radiogroup" aria-label="Right answer">
+          <input type="radio" name="qeTF" id="qetf-t" value="True" checked><label for="qetf-t">True</label>
+          <input type="radio" name="qeTF" id="qetf-f" value="False"><label for="qetf-f">False</label>
+        </div>
+      </div>
+      <label class="auth-field" id="qeTypeRow" hidden><span>Right answer <small>(capitals and spaces don't matter)</small></span><input type="text" id="qeAns" maxlength="40" autocomplete="off"></label>
+      <p class="auth-msg" id="qeMsg" role="status" aria-live="polite"></p>
+      <button class="go" type="submit" id="qeAdd">Add question</button>
+    </form>
+    <ol class="qe-list" id="qeList"></ol>
+    <div class="res-actions"><button class="ghost" id="qeClose" type="button">Done</button></div>
   </div>
 </div>
 

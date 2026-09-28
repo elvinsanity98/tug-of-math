@@ -2,7 +2,10 @@
    pulls on the rope, the clock and online sync. Screens and menus live in app.js.
    Offline (Same PC, vs computer) this device runs everything. Online, the host
    runs the rope, the clock and the computer players; each device judges its own
-   player's answers and tells the room about every pull. */
+   player's answers and tells the room about every pull. In Custom rooms a
+   referee can supply the questions (multiple choice, true/false or typed
+   answers), slip in new ones mid-match and end the match with a whistle.
+   Ranked matches never bring in computer players. */
 const Game = (() => {
   const $ = id => document.getElementById(id);
   const KEYS = {
@@ -16,7 +19,7 @@ const Game = (() => {
     hard:   { min: 1.05, max: 2.0, acc: 0.95, name: 'Champion' },
   };
   const DEFAULT_MSG = 'Faster answers pull harder';
-  const NET_EVENTS = new Set(['pull', 'sync', 'end', 'left']);
+  const NET_EVENTS = new Set(['pull', 'sync', 'end', 'left', 'addq', 'refend']);
   const handlers = { end() {} };
   let M = null;       // the match being played
   let qid = 0;
@@ -58,6 +61,30 @@ const Game = (() => {
     let guard = 0;
     while (set.size < 4 && guard++ < 60) { const v = ans + rnd(-15, 15); if (v >= 0) set.add(v); }
     return shuffle([...set]);
+  }
+
+  /* ---------- referee questions (Custom rooms) ----------
+     { text, type: 'mc' | 'tf' | 'type', options: 2-4 choices (mc only), answer } */
+  const clip = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
+  function cleanQuestion(q) {
+    if (!q || typeof q !== 'object') return null;
+    const text = clip(q.text, 140), type = ['mc', 'tf', 'type'].includes(q.type) ? q.type : null;
+    if (!text || !type) return null;
+    if (type === 'tf') return { text, type, answer: /^f/i.test(String(q.answer)) ? 'False' : 'True' };
+    if (type === 'type') { const answer = clip(q.answer, 40); return answer ? { text, type, answer } : null; }
+    const options = [...new Set((Array.isArray(q.options) ? q.options : []).map(o => clip(o, 40)).filter(Boolean))].slice(0, 4);
+    const answer = clip(q.answer, 40);
+    return options.length >= 2 && options.includes(answer) ? { text, type, options, answer } : null;
+  }
+  // typed answers: ignore case and spacing; "12", "12.0" and "1,2" style numbers compare as numbers
+  const norm = v => {
+    const t = String(v).trim().toLowerCase().replace(/\s+/g, ' ');
+    const n = Number(t.replace(/,/g, ''));
+    return t !== '' && Number.isFinite(n) ? String(n) : t;
+  };
+  function refQuestion(q) {
+    const options = q.type === 'mc' ? shuffle(q.options.slice()) : q.type === 'tf' ? ['True', 'False'] : [];
+    return { id: ++qid, text: q.text, ans: q.answer, options, type: q.type };
   }
 
   /* ---------- sound ---------- */
@@ -114,7 +141,13 @@ const Game = (() => {
   const ui = {};
   for (const k of ['L', 'R']) {
     ui[k] = { panel: $('panel' + k), play: $('play' + k), q: $('q' + k), wrap: $('ans' + k), msg: $('msg' + k), pow: $('pow' + k),
-      pulls: $('pulls' + k), streak: $('streak' + k), name: $('name' + k), roster: $('roster' + k), btns: [] };
+      pulls: $('pulls' + k), streak: $('streak' + k), name: $('name' + k), roster: $('roster' + k),
+      typed: $('typed' + k), typeIn: $('typeIn' + k), btns: [] };
+    ui[k].typed.addEventListener('submit', e => {
+      e.preventDefault();
+      const p = M && M.focus[k];
+      if (p && p.local && !p.bot) answerTyped(p, ui[k].typeIn.value);
+    });
     for (let i = 0; i < 4; i++) {
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'ans'; b.id = `ans${k}${i}`;
@@ -138,11 +171,22 @@ const Game = (() => {
   function showQuestion(k, q) {
     const u = ui[k];
     u.q.textContent = q.text;
+    u.q.classList.toggle('long', q.text.length > 14);
     u.q.classList.remove('fresh'); void u.q.offsetWidth; u.q.classList.add('fresh');
-    q.options.forEach((v, i) => {
-      const b = u.btns[i];
+    const typed = q.type === 'type';
+    u.wrap.hidden = typed;
+    u.typed.hidden = !typed;
+    if (typed) {
+      u.typeIn.value = ''; u.typeIn.disabled = false;
+      const p = M.focus[k];
+      if (p && p.local && !p.bot) u.typeIn.focus({ preventScroll: true });
+    }
+    u.btns.forEach((b, i) => {
+      const v = q.options[i];
+      b.hidden = v === undefined;
       b.classList.remove('good', 'bad', 'think', 'press');
-      b.querySelector('.val').textContent = v;
+      b.classList.toggle('long', v !== undefined && String(v).length > 6);
+      b.querySelector('.val').textContent = v === undefined ? '' : v;
       b.setAttribute('aria-label', `${v} (key ${KEY_LABEL[k][i]})`);
     });
     u.panel.classList.remove('locked');
@@ -157,6 +201,7 @@ const Game = (() => {
       const n = document.createElement('span'); n.className = 'r-name'; n.textContent = p.name;
       if (p.local && M.online) n.insertAdjacentHTML('beforeend', ' <i class="tag you">YOU</i>');
       if (p.bot) n.insertAdjacentHTML('beforeend', ` <i class="tag">${p.left ? 'LEFT · CPU' : 'CPU'}</i>`);
+      else if (p.left) n.insertAdjacentHTML('beforeend', ' <i class="tag">LEFT</i>');
       const c = document.createElement('b'); c.textContent = p.s.correct;
       li.append(n, c);
       list.appendChild(li);
@@ -180,7 +225,8 @@ const Game = (() => {
       u.panel.classList.toggle('solo', !focus);
       u.panel.classList.remove('locked', 'idle');
       u.q.textContent = '?';
-      u.btns.forEach(b => { b.classList.remove('good', 'bad', 'think', 'press'); b.querySelector('.val').textContent = '–'; b.disabled = !!(focus && focus.bot); });
+      u.btns.forEach(b => { b.hidden = false; b.classList.remove('good', 'bad', 'think', 'press', 'long'); b.querySelector('.val').textContent = '–'; b.disabled = !!(focus && focus.bot); });
+      u.wrap.hidden = false; u.typed.hidden = true; u.q.classList.remove('long');
       u.pow.style.width = '0%';
       setMsg(k, focus && focus.bot ? `Computer: ${CPU[focus.level].name}` : DEFAULT_MSG);
       u.panel.setAttribute('aria-label', `${teamLabel(k)} (${k === 'L' ? 'red' : 'blue'} side)`);
@@ -188,7 +234,9 @@ const Game = (() => {
     }
     const hint = $('keysHint');
     const same = M.cfg.kind === 'local';
-    hint.innerHTML = same
+    hint.innerHTML = M.isRef
+      ? '<span>You are the referee: add a question any time, or blow the whistle to end the match.</span>'
+      : same
       ? '<span><b class="kr">Red</b> <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd> or <kbd>1</kbd>–<kbd>4</kbd></span><span><b class="kb">Blue</b> <kbd>J</kbd><kbd>K</kbd><kbd>L</kbd><kbd>;</kbd> or <kbd>7</kbd>–<kbd>0</kbd></span><span>or tap the answers</span>'
       : '<span>Answer with <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>, <kbd>J</kbd><kbd>K</kbd><kbd>L</kbd><kbd>;</kbd> or tap</span>';
   }
@@ -229,7 +277,12 @@ const Game = (() => {
   function nextQuestion(p) {
     const s = p.s;
     let q, guard = 0;
-    do { q = buildQuestion(M.settings.op, p.diff || M.settings.diff); } while (s.q && q.text === s.q.text && guard++ < 10);
+    if (!p.queue.length && M.qset && M.qset.length) {
+      p.queue = shuffle(M.qset.slice());
+      if (p.queue.length > 1 && s.q && p.queue[0].text === s.q.text) p.queue.push(p.queue.shift());
+    }
+    if (p.queue.length) q = refQuestion(p.queue.shift());
+    else do { q = buildQuestion(M.settings.op, p.diff || M.settings.diff); } while (s.q && q.text === s.q.text && guard++ < 10);
     s.q = q; s.qStart = performance.now(); s.lockUntil = 0;
     if (M.focus[p.side] === p) showQuestion(p.side, q);
     if (p.bot) scheduleBot(p);
@@ -237,8 +290,15 @@ const Game = (() => {
   function answer(p, i) {
     if (!M || M.state !== 'play') return;
     const s = p.s, now = performance.now();
-    if (!s.q || now < s.lockUntil) return;
+    if (!s.q || now < s.lockUntil || s.q.type === 'type' || i >= s.q.options.length) return;
     resolve(p, i, s.q.options[i] === s.q.ans, (now - s.qStart) / 1000);
+  }
+  function answerTyped(p, value) {
+    if (!M || M.state !== 'play') return;
+    const s = p.s, now = performance.now();
+    if (!s.q || now < s.lockUntil || s.q.type !== 'type' || !String(value).trim()) return;
+    // typing takes longer than tapping, so it gets a head start on speed
+    resolve(p, -1, norm(value) === norm(s.q.ans), Math.max(0.3, (now - s.qStart) / 1000 - 1.5));
   }
   // one answer by a local player or a computer player: update stats, move the rope, tell the room
   function resolve(p, i, ok, secs) {
@@ -256,7 +316,7 @@ const Game = (() => {
       later(() => { if (M.state === 'play') nextQuestion(p); }, 220);
     } else {
       s.wrong++; s.streak = 0;
-      ev = { t: 'pull', pid: p.id, ok: false, i, power: 0.035 / n, text: s.q.text, ans: s.q.ans, st: pack(s) };
+      ev = { t: 'pull', pid: p.id, ok: false, i, power: 0.035 / n, text: s.q.text, ans: s.q.ans, custom: !!s.q.type, st: pack(s) };
       s.lockUntil = performance.now() + 1000;
       later(() => { if (M.state === 'play') nextQuestion(p); }, 1000);
     }
@@ -289,7 +349,8 @@ const Game = (() => {
         const u = ui[k];
         if (ev.i >= 0 && ev.i < 4) u.btns[ev.i].classList.add('bad');
         u.panel.classList.add('locked');
-        setMsg(k, `Slipped! ${ev.text} = ${ev.ans}`, 'oops');
+        u.typeIn.disabled = true;
+        setMsg(k, ev.custom ? `Not quite! Answer: ${ev.ans}` : `Slipped! ${ev.text} = ${ev.ans}`, 'oops');
         u.pow.style.width = '0%';
       }
       if (loud) Sfx.wrong();
@@ -300,20 +361,43 @@ const Game = (() => {
   /* ---------- computer players (run by the host) ---------- */
   function scheduleBot(p) {
     const c = CPU[p.level] || CPU.medium;
-    const f = { easy: 1, medium: 1.2, hard: 1.45 }[p.diff || M.settings.diff] || 1;
+    const q = p.s.q, n = q.options.length;
+    const f = q.type ? 1.5 : { easy: 1, medium: 1.2, hard: 1.45 }[p.diff || M.settings.diff] || 1;
     const delay = (c.min + Math.random() * (c.max - c.min)) * f * 1000;
-    let pick = p.s.q.options.indexOf(p.s.q.ans);
-    if (Math.random() > c.acc) { const w = [0, 1, 2, 3].filter(i => i !== pick); pick = w[rnd(0, 2)]; }
-    const q = p.s.q;
-    if (M.focus[p.side] === p) {
+    const right = Math.random() <= c.acc;
+    let pick = n ? q.options.indexOf(q.ans) : -1;
+    if (!right && n) { const w = [...Array(n).keys()].filter(i => i !== pick); pick = w[rnd(0, w.length - 1)]; }
+    if (M.focus[p.side] === p && n) {
       const btns = ui[p.side].btns;
       const clear = () => btns.forEach(b => b.classList.remove('think'));
-      later(() => { clear(); btns[rnd(0, 3)].classList.add('think'); }, delay * 0.45);
+      later(() => { clear(); btns[rnd(0, n - 1)].classList.add('think'); }, delay * 0.45);
       later(() => { clear(); btns[pick].classList.add('think'); }, delay * 0.8);
       later(() => { clear(); pressFx(btns[pick]); }, delay - 10);
     }
-    later(() => { if (M.state === 'play' && p.s.q === q) resolve(p, pick, pick === q.options.indexOf(q.ans), delay / 1000); }, delay);
+    later(() => { if (M.state === 'play' && p.s.q === q) resolve(p, pick, right, delay / 1000); }, delay);
   }
+
+  /* ---------- referee ---------- */
+  // a new question comes up next for every player; in a referee question set it also joins the rotation
+  function addQuestion(raw) {
+    const q = cleanQuestion(raw);
+    if (!M || !q || M.state === 'over') return null;
+    if (M.qset) M.qset.push(q);
+    for (const p of M.players) if (p.local || (M.host && p.bot)) p.queue.unshift(q);
+    return q;
+  }
+  function refAdd(raw) {
+    if (!M || !M.isRef) return false;
+    const q = addQuestion(raw);
+    if (!q) return false;
+    Net.send({ t: 'addq', q });
+    return true;
+  }
+  function refWhistle() {
+    if (!M || !M.isRef || M.state !== 'play') return;
+    if (M.host) refEnd(); else Net.send({ t: 'refend' });
+  }
+  function refEnd() { if (M && M.state === 'play') endMatch(Math.abs(S.pos) < 0.02 ? 0 : Math.sign(S.pos), 'ref'); }
 
   /* ---------- clock ---------- */
   function fmt(sec) { sec = Math.max(0, Math.ceil(sec)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; }
@@ -347,12 +431,14 @@ const Game = (() => {
     stop();
     const online = cfg.kind === 'online';
     const players = cfg.players.map(p => Object.assign({}, p, {
-      s: makeStats(),
+      s: makeStats(), queue: [],
       local: !p.bot && (online ? p.id === cfg.me : true),
     }));
+    const qset = Array.isArray(cfg.questions) ? cfg.questions.map(cleanQuestion).filter(Boolean) : [];
     M = {
       cfg, online, host: !!cfg.host, me: cfg.me, settings: cfg.settings, players,
       byId: new Map(players.map(p => [p.id, p])), focus: { L: null, R: null },
+      qset: qset.length ? qset : null, referee: cfg.referee || null, isRef: !!cfg.referee && cfg.referee === cfg.me,
       state: 'ready', timeLeft: cfg.settings.time, elapsed: 0, shownSec: -1, syncT: 0, timers: new Set(),
     };
     Object.assign(S, { pos: 0, target: 0, vel: 0, pullL: 0, pullR: 0, flinchL: 0, flinchR: 0, winner: 0, winT: 0, shake: 0, mode: 'ready' });
@@ -398,12 +484,16 @@ const Game = (() => {
       S.target = S.pos;
       Sfx.tie();
     }
-    const m = M;
-    later(() => handlers.end({
-      w, why, elapsed: m.elapsed, cfg: m.cfg, settings: m.settings,
-      players: m.players.map(p => ({ id: p.id, name: p.name, side: p.side, bot: !!p.bot, left: !!p.left, local: p.local, diff: p.diff,
+    const sum = snapshot(w, why);
+    later(() => handlers.end(sum), 1900);
+  }
+  function snapshot(w, why) {
+    if (!M) return null;
+    return {
+      w, why, elapsed: M.elapsed, cfg: M.cfg, settings: M.settings, isRef: M.isRef,
+      players: M.players.map(p => ({ id: p.id, name: p.name, side: p.side, bot: !!p.bot, left: !!p.left, local: p.local, diff: p.diff,
         level: p.level, stats: { correct: p.s.correct, wrong: p.s.wrong, best: p.s.best, fastest: p.s.fastest, timeSum: p.s.timeSum } })),
-    }), 1900);
+    };
   }
 
   // called every frame by app.js
@@ -447,24 +537,34 @@ const Game = (() => {
         if (M.host || from !== hostId || M.state === 'over') return;
         for (const p of M.players) unpack(p.s, m.stats && m.stats[p.id]);
         M.elapsed = Number(m.elapsed) || 0;
-        presentEnd(Math.sign(m.w) || 0, m.why === 'line' ? 'line' : 'time');
+        presentEnd(Math.sign(m.w) || 0, ['line', 'time', 'ref'].includes(m.why) ? m.why : 'time');
         break;
       case 'left': {
         if (from !== hostId) return;
         const p = M.byId.get(m.pid);
-        if (p && !p.local) { p.bot = true; p.left = true; renderRoster(p.side); }
+        if (p && !p.local) { p.bot = !!m.bot; p.left = true; renderRoster(p.side); }
         break;
       }
+      case 'addq':
+        if (M.referee && from === M.referee) addQuestion(m.q);
+        break;
+      case 'refend':
+        if (M.host && M.referee && from === M.referee) refEnd();
+        break;
     }
   }
-  // host: a player dropped out mid-match, so a computer takes over their slot
+  // host: a player dropped out mid-match. A computer takes over their slot,
+  // except in Ranked, where their team plays on a player short.
   function playerLeft(id) {
     if (!M || !M.host) return;
     const p = M.byId.get(id);
-    if (!p || p.bot || p.local) return;
-    p.bot = true; p.left = true; p.level = p.level || 'medium';
-    if (M.state === 'play') nextQuestion(p);
-    Net.send({ t: 'left', pid: id });
+    if (!p || p.bot || p.local || p.left) return;
+    p.left = true;
+    if (M.cfg.mode !== 'ranked') {
+      p.bot = true; p.level = p.level || 'medium';
+      if (M.state === 'play') nextQuestion(p);
+    }
+    Net.send({ t: 'left', pid: id, bot: !!p.bot });
     renderRoster(p.side);
   }
 
@@ -485,7 +585,8 @@ const Game = (() => {
   }
 
   return {
-    start, stop, tick, onNet, onKey, playerLeft,
+    start, stop, tick, onNet, onKey, playerLeft, snapshot, refAdd, refWhistle, cleanQuestion,
+    get isRef() { return !!(M && M.isRef); },
     handles: t => NET_EVENTS.has(t),
     on(type, fn) { handlers[type] = fn; },
     get active() { return !!M; },

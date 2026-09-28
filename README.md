@@ -9,10 +9,18 @@ Developed by **BongDevz**.
 | Mode | Teams | What happens |
 | ---- | ----- | ------------ |
 | **Classic** | 1v1 or 5v5 | Casual games: online quick match, vs the computer, or (1v1) two players on one screen. Earns coins. |
-| **Ranked** | 1v1 or 5v5 | Online quick match for stars. Earns 1.5× coins. |
-| **Custom** | 1 to 5 a side | A private room with a code. The host picks each team's size, moves any player to the other side with ⇄, and chooses whether computer players fill empty spots. Practice only: no coins or stars. |
+| **Ranked** | 1v1 or 5v5 | Online quick match for stars, against real players only (never the computer). Earns 1.5× coins. |
+| **Custom** | 1 to 5 a side | A private room with a code. The host picks each team's size, moves any player to the other side with ⇄, makes someone the referee with ⚑, and chooses whether computer players fill empty spots. Practice only: no coins or stars. |
 
-Quick match waits about 15 seconds (1v1) or 20 seconds (5v5) for other players, then fills any empty spots with computer players. Every player on the field has their own character, so a 5v5 shows ten pullers.
+Classic quick match waits about 15 seconds (1v1) or 20 seconds (5v5) for other players, then fills any empty spots with computer players. Ranked waits until enough real players are searching (2 for 1v1, 10 for 5v5). If a matched player never connects, everyone goes back to searching; if someone leaves mid-match, their team plays on a player short and leaving counts as a loss for them. Every player on the field has their own character, so a 5v5 shows ten pullers.
+
+### Referee (Custom rooms)
+
+The host can make any player, or themselves, the referee with ⚑. The referee leaves their team and does not pull. Instead they:
+
+- **Write the questions:** set **Questions** to *Referee's questions*, then the referee presses **Write questions** and adds up to 60, on any subject. Each question has an answer type: **Multiple choice** (2 to 4 choices, one ticked as right), **True / False**, or **Type the answer** (capitals and spaces don't matter, and `12` matches `12.0`). Players get them in random order. The list is saved in the referee's browser for next time.
+- **Add questions mid-match:** **+ Question** sends a new one that comes up next for every player.
+- **End the match:** **Whistle: end match** stops it; the side holding more of the rope wins.
 
 ## Ranks
 
