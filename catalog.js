@@ -144,6 +144,11 @@ const Catalog = (() => {
     { id: 'wizard',  name: 'Wizard',       price: 800,  minStars: 0,   blurb: 'Math is basically magic.' },
     { id: 'astro',   name: 'Astronaut',    price: 1000, minStars: 0,   blurb: 'Pulling from orbit.' },
     { id: 'robot',   name: 'Robot',        price: 1200, minStars: 0,   blurb: 'Beep. Correct. Boop.' },
+    // full-body costumes (drawn in scene.js SUITS)
+    { id: 'straw',   name: 'Straw Hat',    price: 1300, minStars: 0,   blurb: 'Straw hat, red vest, big grin.' },
+    { id: 'web',     name: 'Web Slinger',  price: 1400, minStars: 0,   blurb: 'Red-and-blue suit. Sticky grip.' },
+    { id: 'iron',    name: 'Iron Armor',   price: 1600, minStars: 0,   blurb: 'Red and gold armor, glowing core.' },
+    { id: 'doom',    name: 'Doom Lord',    price: 1600, minStars: 0,   blurb: 'Iron mask, green cloak, no mercy.' },
     { id: 'crown',   name: 'Royal Crown',  price: 1500, minStars: 100, blurb: 'For Gold rank and above.' },
     { id: 'halo',    name: 'Diamond Halo', price: 2000, minStars: 200, blurb: 'Wings and a halo. Diamond rank.' },
     { id: 'legend',  name: 'Legend Flame', price: 2500, minStars: 250, blurb: 'A blazing aura. Legends only.' },

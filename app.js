@@ -233,6 +233,7 @@
     $('heroStats').textContent = me.games_played
       ? `${me.games_played} games · ${me.wins} wins (${rate}%) · best streak ${me.best_streak}`
       : 'Play your first game to start earning coins.';
+    $('skinBtn').textContent = `Skin: ${Catalog.skinById(me.skin).name} · Change`;
     const note = $('offlineNote');
     note.hidden = DB.online;
     note.textContent = 'Offline mode: coins, ranks and the shop need an internet connection. Same PC, vs computer and LAN rooms still work.';
@@ -273,6 +274,7 @@
   }
   document.querySelectorAll('.dash-nav button').forEach(b => b.addEventListener('click', () => { Sfx.click(); showView(b.dataset.view); }));
   $('meChip').addEventListener('click', () => showView('profile'));
+  $('skinBtn').addEventListener('click', () => { Sfx.click(); showView('shop'); });
 
   /* ---------- shop ---------- */
   let confirmBuy = null;
