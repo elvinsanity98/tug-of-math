@@ -36,6 +36,15 @@ Each tier has its own badge, from a bronze shield up to Legend's flaming crest (
 
 Classic and Ranked games pay coins: 10 for playing, 2 per right answer, 20 more for a win (×1.5 in Ranked). Every player starts with 100. The **Shop** sells 12 skins for your puller, from a Sporty Cap to the Robot. Royal Crown, Diamond Halo and Legend Flame also need Gold, Diamond or Legend rank. Your skin shows up for everyone in online games.
 
+## Leaderboards
+
+There are two boards, switched at the top of the **Leaderboard** page:
+
+- **Classic:** Classic games with at least one real player on the other side. Wins, best streak, right answers and fastest answer.
+- **Ranked:** Ranked games only, with the same stats plus **Rank** (stars).
+
+Games against the computer never count: not **Vs computer**, not Classic quick matches that were filled with computer players only, and not Custom rooms. The Profile page still shows your totals from every game.
+
 ## Dashboard
 
 After the landing screen, the dashboard shows your coins, rank and character, and has pages for **Play**, **Shop**, **Ranks**, **Leaderboard**, **History** (your last 25 games) and **Profile** (name and stats).
@@ -51,7 +60,7 @@ vercel.com → **Add New → Project** → import this repository → Framework 
 1. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `config.js`. Never put the `service_role` / secret key there; the file is public.
 2. **Authentication → Sign In / Providers → Email**: keep Email on and turn **Confirm email** off, so players can play right after signing up. (Supabase's built-in mailer only reaches your own team's addresses; connect an email service under **Authentication → SMTP** before turning confirmation on.) **Allow anonymous sign-ins** can stay off.
 3. **Authentication → URL Configuration**: set **Site URL** to the game's address and add it (plus `http://localhost/**` for testing) to **Redirect URLs**, so password-reset links come back to the game.
-4. **SQL Editor**: run `supabase/schema.sql`, then `supabase/002_modes_ranks_skins.sql`. Coins, stars and purchases only change through the database functions in these files, never directly from the page.
+4. **SQL Editor**: run `supabase/schema.sql`, then `supabase/002_modes_ranks_skins.sql`, then `supabase/003_leaderboards.sql`. Coins, stars, purchases and leaderboard totals only change through the database functions in these files, never directly from the page.
 5. If online play cannot connect, open **Realtime → Settings** and make sure public channels are allowed.
 
 Players sign up with a player name, email and password, then sign in on any device. **Forgot password?** emails a reset link (it needs working email, see step 2). The player name shows on leaderboards; emails are never shown to other players.
@@ -94,6 +103,6 @@ Outside Same PC, any of these keys answer for your own player. You can also tap 
 - `net.js` – online rooms for 2 to 10 players (LAN WebSocket or Supabase Realtime) and quick match
 - `db.js` – player account, coins, skins, ranks, results, leaderboard and history through Supabase
 - `config.js` – Supabase Project URL and publishable key
-- `supabase/schema.sql`, `supabase/002_modes_ranks_skins.sql` – database tables, rules and functions
+- `supabase/schema.sql`, `supabase/002_modes_ranks_skins.sql`, `supabase/003_leaderboards.sql` – database tables, rules and functions
 - `server.js` – LAN server with no dependencies: serves the game and relays room messages
 - `start-lan-server.bat` – double-click launcher for the LAN server on Windows

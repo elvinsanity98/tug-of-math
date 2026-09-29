@@ -156,9 +156,16 @@
 
     <!-- Leaderboard -->
     <section class="view" id="view-board" hidden>
-      <div class="view-head"><h2>Leaderboard</h2></div>
+      <div class="view-head">
+        <h2>Leaderboard</h2>
+        <p id="boardAbout">Ranked games only.</p>
+      </div>
+      <div class="seg board-scope" role="radiogroup" aria-label="Leaderboard">
+        <input type="radio" name="boardScope" id="scope-classic" value="classic"><label for="scope-classic">Classic</label>
+        <input type="radio" name="boardScope" id="scope-ranked" value="ranked" checked><label for="scope-ranked">Ranked</label>
+      </div>
       <div class="seg board-tabs" role="radiogroup" aria-label="Rank players by">
-        <input type="radio" name="board" id="board-rank" value="rank" checked><label for="board-rank">Rank</label>
+        <input type="radio" name="board" id="board-rank" value="rank" checked><label for="board-rank" id="board-rank-label">Rank</label>
         <input type="radio" name="board" id="board-wins" value="wins"><label for="board-wins">Wins</label>
         <input type="radio" name="board" id="board-streak" value="streak"><label for="board-streak">Best streak</label>
         <input type="radio" name="board" id="board-answers" value="answers"><label for="board-answers">Right answers</label>

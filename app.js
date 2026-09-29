@@ -373,8 +373,18 @@
     answers: ['Right answers', p => p.total_correct],
     fastest: ['Fastest', p => (p.fastest_ms / 1000).toFixed(2) + ' s'],
   };
+  const BOARD_ABOUT = {
+    classic: 'Classic games against real players. Games against the computer, and Custom rooms, don’t count.',
+    ranked: 'Ranked games only. Every ranked opponent is a real player.',
+  };
   let boardReq = 0;
   async function loadBoard() {
+    const scope = radio('boardScope') === 'classic' ? 'classic' : 'ranked';
+    // Rank only exists on the Ranked board
+    $('board-rank').disabled = scope === 'classic';
+    $('board-rank-label').hidden = scope === 'classic';
+    if (scope === 'classic' && radio('board') === 'rank') $('board-wins').checked = true;
+    $('boardAbout').textContent = BOARD_ABOUT[scope];
     const req = ++boardReq, board = radio('board');
     const [label, value] = BOARD_COL[board];
     const note = $('boardNote');
@@ -382,7 +392,7 @@
     $('boardCol').textContent = label;
     if (!DB.online) { $('boardTable').hidden = true; note.textContent = 'The leaderboard needs an internet connection.'; return; }
     let rows;
-    try { rows = await DB.leaderboard(board); }
+    try { rows = await DB.leaderboard(scope, board); }
     catch (e) {
       if (req !== boardReq) return;
       $('boardTable').hidden = true; note.className = 'board-note err'; note.textContent = e.message;
@@ -398,9 +408,11 @@
       body.appendChild(tr);
     });
     $('boardTable').hidden = !rows.length;
-    note.textContent = rows.length ? '' : board === 'rank' ? 'No ranked games yet. Be the first on the board.' : 'No scores yet. Play Classic or Ranked to get on the board.';
+    note.textContent = rows.length ? ''
+      : scope === 'ranked' ? 'No ranked games yet. Be the first on the board.'
+      : 'No Classic games against real players yet. Play an online Classic quick match to get on the board.';
   }
-  document.querySelectorAll('input[name="board"]').forEach(r => r.addEventListener('change', loadBoard));
+  document.querySelectorAll('input[name="board"], input[name="boardScope"]').forEach(r => r.addEventListener('change', loadBoard));
 
   /* ---------- history ---------- */
   function ago(iso) {
@@ -1192,6 +1204,8 @@
       p_correct: s.correct, p_wrong: s.wrong, p_best_streak: s.best,
       p_fastest_ms: s.fastest === Infinity || s.fastest == null ? null : Math.max(1, Math.round(s.fastest * 1000)),
       p_elapsed_secs: Math.round(sum.elapsed * 100) / 100,
+      // leaderboards only count games with real opponents (never the computer)
+      p_real_opponents: Math.min(5, sum.players.filter(x => x.side !== p.side && x.side !== 'ref' && !x.bot).length),
     });
   }
   function showRewards(res, cfg) {

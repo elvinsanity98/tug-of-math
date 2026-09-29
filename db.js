@@ -13,14 +13,16 @@ const DB = (() => {
   const recovering = /type=recovery/.test(landedHash);
   const fromEmail = /access_token=|type=(signup|recovery|magiclink|invite|email_change)/.test(landedHash);
   const linkError = (/error_description=([^&]+)/.exec(landedHash) || [])[1];
-  const BOARDS = {
+  // Leaderboards come from the `leaderboard` view (supabase/003_leaderboards.sql): one board
+  // for Classic games against real players and one for Ranked. Games vs the computer never count.
+  const METRICS = {
     wins:    { col: 'wins', asc: false },
-    rank:    { col: 'rank_stars', asc: false, where: ['ranked_played', 0] },
+    rank:    { col: 'rank_stars', asc: false },
     streak:  { col: 'best_streak', asc: false },
     answers: { col: 'total_correct', asc: false },
     fastest: { col: 'fastest_ms', asc: true },
   };
-  const COLS = 'id, display_name, games_played, wins, best_streak, total_correct, fastest_ms, rank_stars, skin';
+  const COLS = 'player_id, display_name, games_played, wins, best_streak, total_correct, fastest_ms, rank_stars, skin';
   let loading = null;
   let online = false;
   let profile = null;
@@ -163,7 +165,12 @@ const DB = (() => {
     if (!online) return null;
     try {
       const sb = await client();
-      const { data, error } = await sb.rpc('submit_result', r);
+      let { data, error } = await sb.rpc('submit_result', r);
+      if (error && 'p_real_opponents' in r && /submit_result|schema cache|function/i.test(error.message || '')) {
+        // database not updated to 003_leaderboards.sql yet: save without the new field
+        const { p_real_opponents, ...old } = r;
+        ({ data, error } = await sb.rpc('submit_result', old));
+      }
       if (error) throw error;
       profile.coins = data.coins_total;
       profile.rank_stars = data.stars_after;
@@ -197,18 +204,24 @@ const DB = (() => {
   }
 
   /* ---------- leaderboard + history ---------- */
-  async function leaderboard(board) {
-    const b = BOARDS[board] || BOARDS.wins;
+  // board: 'classic' | 'ranked'; metric: a METRICS key (rank only makes sense on 'ranked')
+  async function leaderboard(board, metric) {
+    const m = METRICS[metric] || METRICS.wins;
     const sb = await client();
-    let q = sb.from('profiles').select(COLS).gt(b.where ? b.where[0] : 'games_played', b.where ? b.where[1] : 0);
-    if (b.col === 'fastest_ms') q = q.not('fastest_ms', 'is', null);
+    let q = sb.from('leaderboard').select(COLS).eq('board', board === 'ranked' ? 'ranked' : 'classic');
+    if (m.col === 'fastest_ms') q = q.not('fastest_ms', 'is', null);
     const { data, error } = await q
-      .order(b.col, { ascending: b.asc, nullsFirst: false })
+      .order(m.col, { ascending: m.asc, nullsFirst: false })
       .order('games_played', { ascending: true })
-      .order('created_at', { ascending: true })
+      .order('display_name', { ascending: true })
       .limit(20);
-    if (error) throw fail(error, 'Could not load the leaderboard.');
-    return data || [];
+    if (error) {
+      if (/leaderboard|relation|schema cache/i.test(error.message || '')) {
+        throw new Error('The leaderboard needs a database update: run supabase/003_leaderboards.sql in Supabase.');
+      }
+      throw fail(error, 'Could not load the leaderboard.');
+    }
+    return (data || []).map(r => ({ ...r, id: r.player_id }));
   }
   async function history() {
     const sb = await client();
