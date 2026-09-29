@@ -69,7 +69,8 @@ const DB = (() => {
     try { g = JSON.parse(localStorage.getItem(GUEST_KEY) || 'null'); } catch (e) { /* storage blocked */ }
     if (!g || !g.id) g = { id: 'guest' + Math.random().toString(36).slice(2, 10), display_name: 'Player' };
     return { id: g.id, display_name: g.display_name || 'Player', coins: 0, rank_stars: 0, best_stars: 0, skin: 'classic',
-      games_played: 0, wins: 0, losses: 0, draws: 0, total_correct: 0, best_streak: 0, fastest_ms: null, ranked_played: 0, ranked_wins: 0 };
+      games_played: 0, wins: 0, losses: 0, draws: 0, total_correct: 0, best_streak: 0, fastest_ms: null, ranked_played: 0, ranked_wins: 0,
+      boards: { classic: { games: 0, wins: 0 }, ranked: { games: 0, wins: 0 } } };
   }
   function writeGuest() {
     try { localStorage.setItem(GUEST_KEY, JSON.stringify({ id: profile.id, display_name: profile.display_name })); } catch (e) { /* storage blocked */ }
@@ -107,17 +108,26 @@ const DB = (() => {
     if (!user) { const { data } = await sb.auth.getUser(); user = data.user; }
     if (!user) throw new Error('Not signed in.');
     email = user.email || '';
-    const [p, o] = await Promise.all([
+    const [p, o, b] = await Promise.all([
       sb.from('profiles').select('*').eq('id', user.id).maybeSingle(),
       sb.from('owned_skins').select('skin_id'),
+      sb.from('board_stats').select('board, games_played, wins').eq('player_id', user.id),
     ]);
     if (p.error) throw fail(p.error, 'Could not load your profile.');
     if (!p.data) throw new Error('Your profile is missing. Run supabase/schema.sql.');
     if (!('coins' in p.data)) throw new Error('The database needs supabase/002_modes_ranks_skins.sql.');
     profile = p.data;
     owned = new Set(['classic', ...((o.data || []).map(r => r.skin_id))]);
+    // win rates only count games against real players (see supabase/003_leaderboards.sql)
+    profile.boards = emptyBoards();
+    if (!b.error) {
+      for (const r of b.data || []) if (profile.boards[r.board]) profile.boards[r.board] = { games: r.games_played, wins: r.wins };
+    } else {
+      profile.boards.ranked = { games: profile.ranked_played || 0, wins: profile.ranked_wins || 0 };
+    }
     return profile;
   }
+  function emptyBoards() { return { classic: { games: 0, wins: 0 }, ranked: { games: 0, wins: 0 } }; }
   async function signUp(name, mail, password) {
     const sb = await client();
     const { data, error } = await sb.auth.signUp({ email: mail, password, options: { data: { display_name: name }, emailRedirectTo: location.origin + location.pathname } });
@@ -178,6 +188,9 @@ const DB = (() => {
       profile.games_played++;
       if (r.p_outcome === 'win') profile.wins++;
       if (r.p_mode === 'ranked') { profile.ranked_played++; if (r.p_outcome === 'win') profile.ranked_wins++; }
+      // same rule as submit_result(): Ranked, or Classic with at least one real opponent
+      const board = r.p_mode === 'ranked' ? 'ranked' : r.p_mode === 'classic' && r.p_real_opponents > 0 ? 'classic' : null;
+      if (board && profile.boards) { profile.boards[board].games++; if (r.p_outcome === 'win') profile.boards[board].wins++; }
       profile.total_correct += r.p_correct;
       profile.best_streak = Math.max(profile.best_streak, r.p_best_streak);
       return data;

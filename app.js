@@ -218,6 +218,17 @@
   $('landGo').addEventListener('click', enter);
 
   /* ============ dashboard ============ */
+  // win rates from games against real players only: Classic (real opponents) and Ranked, never vs computer
+  function winRates(p) {
+    const b = p.boards || { classic: { games: 0, wins: 0 }, ranked: { games: 0, wins: 0 } };
+    const one = x => ({ games: x.games, wins: x.wins, pct: x.games ? Math.round(x.wins / x.games * 100) : null });
+    return {
+      classic: one(b.classic),
+      ranked: one(b.ranked),
+      all: one({ games: b.classic.games + b.ranked.games, wins: b.classic.wins + b.ranked.wins }),
+    };
+  }
+  const pctText = r => (r.pct === null ? '—' : r.pct + '%');
   function renderDash() {
     const r = Catalog.rankInfo(me.rank_stars);
     $('meName').textContent = me.display_name;
@@ -229,10 +240,12 @@
     $('rankedArt').innerHTML = Catalog.badge(me.rank_stars, { ribbon: false });
     $('heroStars').innerHTML = Catalog.starsRow(me.rank_stars);
     $('coinCount').textContent = me.coins.toLocaleString();
-    const rate = me.games_played ? Math.round(me.wins / me.games_played * 100) : 0;
-    $('heroStats').textContent = me.games_played
-      ? `${me.games_played} games · ${me.wins} wins (${rate}%) · best streak ${me.best_streak}`
-      : 'Play your first game to start earning coins.';
+    const wr = winRates(me);
+    $('heroStats').textContent = wr.all.games
+      ? `Win rate ${pctText(wr.all)} · Classic ${pctText(wr.classic)} · Ranked ${pctText(wr.ranked)} · best streak ${me.best_streak}`
+      : me.games_played
+        ? 'Your win rate starts with your first Classic or Ranked game against real players.'
+        : 'Play your first game to start earning coins.';
     $('skinBtn').textContent = `Skin: ${Catalog.skinById(me.skin).name} · Change`;
     const note = $('offlineNote');
     note.hidden = DB.online;
@@ -450,11 +463,13 @@
     $('nameNote').textContent = DB.online ? '' : 'Offline: your name is saved in this browser only.';
     $('accountMail').textContent = DB.online ? `Signed in as ${DB.email}` : 'Playing offline as a guest.';
     $('signOutBtn').hidden = !DB.online;
-    const rate = me.games_played ? Math.round(me.wins / me.games_played * 100) + '%' : '—';
+    const wr = winRates(me);
+    const detail = r => (r.games ? `${pctText(r)} · ${r.wins} of ${r.games}` : '—');
     const stats = [
-      ['Games', me.games_played], ['Wins', me.wins], ['Win rate', rate], ['Best streak', me.best_streak],
+      ['Win rate', detail(wr.all)], ['Classic win rate', detail(wr.classic)], ['Ranked win rate', detail(wr.ranked)],
+      ['Games vs players', wr.all.games], ['All games', me.games_played], ['Best streak', me.best_streak],
       ['Right answers', me.total_correct], ['Fastest answer', me.fastest_ms ? (me.fastest_ms / 1000).toFixed(2) + ' s' : '—'],
-      ['Ranked games', me.ranked_played || 0], ['Best rank', Catalog.rankInfo(me.best_stars || 0).label],
+      ['Best rank', Catalog.rankInfo(me.best_stars || 0).label],
       ['Coins', me.coins.toLocaleString()], ['Skins owned', Catalog.SKINS.filter(s => DB.owns(s.id)).length + ' / ' + Catalog.SKINS.length],
     ];
     $('statGrid').innerHTML = stats.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('');
