@@ -421,6 +421,27 @@ body[data-screen="landing"],body[data-screen="dash"]{padding:0}
 .step.reached{color:#fff}
 .step.current{background:rgba(255,210,63,.16);box-shadow:inset 0 0 0 2px var(--gold)}
 
+/* win rate filter: Overall / Classic / Ranked */
+.wr-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.wr-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:rgba(243,239,228,.75)}
+.wr-select{
+  appearance:none;-webkit-appearance:none;cursor:pointer;border:0;border-radius:999px;
+  font:600 14px/1.2 var(--body);color:#fff;padding:6px 30px 6px 13px;
+  background:rgba(255,255,255,.12) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center/10px 6px;
+  box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.25);
+}
+.wr-select:hover{background-color:rgba(255,255,255,.2)}
+.wr-select:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.wr-select option{color:#1f2433;background:#fff}
+.wr-val{font-family:var(--display);font-weight:400;font-size:26px;line-height:1;color:var(--gold);font-variant-numeric:tabular-nums}
+.wr-sub{font-size:13px;color:rgba(243,239,228,.75)}
+.wr-row.paper{margin:0 0 10px}
+.wr-row.paper .wr-label{color:var(--ink-soft)}
+.wr-row.paper .wr-select{
+  color:var(--ink);background-color:var(--paper-2);box-shadow:inset 0 0 0 1.5px var(--line);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%231f2433' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.wr-row.paper .wr-select:hover{background-color:var(--line)}
 .skin-btn{align-self:flex-start;width:fit-content;margin-top:6px;background:rgba(255,255,255,.12);color:#fff;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.25)}
 .skin-btn:hover{background:rgba(255,255,255,.2)}
 

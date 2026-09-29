@@ -229,6 +229,29 @@
     };
   }
   const pctText = r => (r.pct === null ? '—' : r.pct + '%');
+  // which win rate the Home and Profile dropdowns show; remembered in this browser
+  const WR_KEY = 'tug-of-math-winrate';
+  const WR_NAME = { all: 'Overall', classic: 'Classic', ranked: 'Ranked' };
+  const WR_MODES = ['all', 'classic', 'ranked'];
+  let wrMode = 'all';
+  try { const v = localStorage.getItem(WR_KEY); if (WR_MODES.includes(v)) wrMode = v; } catch (e) { /* storage blocked */ }
+  function renderWinRate() {
+    const r = winRates(me)[wrMode];
+    $('wrHome').value = wrMode;
+    $('wrProfile').value = wrMode;
+    $('wrHomeVal').textContent = pctText(r);
+    $('wrHomeSub').textContent = r.games
+      ? `${r.wins} of ${r.games} games`
+      : wrMode === 'all' ? 'No games against real players yet' : `No ${WR_NAME[wrMode]} games against real players yet`;
+  }
+  for (const id of ['wrHome', 'wrProfile']) {
+    $(id).addEventListener('change', e => {
+      wrMode = WR_MODES.includes(e.target.value) ? e.target.value : 'all';
+      try { localStorage.setItem(WR_KEY, wrMode); } catch (x) { /* storage blocked */ }
+      renderWinRate();
+      if (!$('view-profile').hidden) renderProfile();
+    });
+  }
   function renderDash() {
     const r = Catalog.rankInfo(me.rank_stars);
     $('meName').textContent = me.display_name;
@@ -240,12 +263,10 @@
     $('rankedArt').innerHTML = Catalog.badge(me.rank_stars, { ribbon: false });
     $('heroStars').innerHTML = Catalog.starsRow(me.rank_stars);
     $('coinCount').textContent = me.coins.toLocaleString();
-    const wr = winRates(me);
-    $('heroStats').textContent = wr.all.games
-      ? `Win rate ${pctText(wr.all)} · Classic ${pctText(wr.classic)} · Ranked ${pctText(wr.ranked)} · best streak ${me.best_streak}`
-      : me.games_played
-        ? 'Your win rate starts with your first Classic or Ranked game against real players.'
-        : 'Play your first game to start earning coins.';
+    renderWinRate();
+    $('heroStats').textContent = me.games_played
+      ? `${me.games_played} games played · best streak ${me.best_streak}`
+      : 'Play your first game to start earning coins.';
     $('skinBtn').textContent = `Skin: ${Catalog.skinById(me.skin).name} · Change`;
     const note = $('offlineNote');
     note.hidden = DB.online;
@@ -463,11 +484,11 @@
     $('nameNote').textContent = DB.online ? '' : 'Offline: your name is saved in this browser only.';
     $('accountMail').textContent = DB.online ? `Signed in as ${DB.email}` : 'Playing offline as a guest.';
     $('signOutBtn').hidden = !DB.online;
-    const wr = winRates(me);
-    const detail = r => (r.games ? `${pctText(r)} · ${r.wins} of ${r.games}` : '—');
+    const r = winRates(me)[wrMode];
+    $('wrProfile').value = wrMode;
     const stats = [
-      ['Win rate', detail(wr.all)], ['Classic win rate', detail(wr.classic)], ['Ranked win rate', detail(wr.ranked)],
-      ['Games vs players', wr.all.games], ['All games', me.games_played], ['Best streak', me.best_streak],
+      [`${WR_NAME[wrMode]} win rate`, pctText(r)], [`${WR_NAME[wrMode]} wins`, r.games ? `${r.wins} of ${r.games}` : '—'],
+      ['All games', me.games_played], ['Best streak', me.best_streak],
       ['Right answers', me.total_correct], ['Fastest answer', me.fastest_ms ? (me.fastest_ms / 1000).toFixed(2) + ' s' : '—'],
       ['Best rank', Catalog.rankInfo(me.best_stars || 0).label],
       ['Coins', me.coins.toLocaleString()], ['Skins owned', Catalog.SKINS.filter(s => DB.owns(s.id)).length + ' / ' + Catalog.SKINS.length],

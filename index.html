@@ -97,6 +97,16 @@
             <span class="hero-badge" id="heroBadge"></span>
             <span><b id="heroRankLabel">Bronze I</b><span id="heroStars"></span></span>
           </div>
+          <div class="wr-row">
+            <span class="wr-label">Win rate</span>
+            <select class="wr-select" id="wrHome" aria-label="Show win rate for">
+              <option value="all">Overall</option>
+              <option value="classic">Classic</option>
+              <option value="ranked">Ranked</option>
+            </select>
+            <b class="wr-val" id="wrHomeVal">—</b>
+            <span class="wr-sub" id="wrHomeSub"></span>
+          </div>
           <p class="hero-stats" id="heroStats"></p>
           <button class="pill-btn skin-btn" id="skinBtn" type="button">Change skin</button>
         </div>
@@ -209,6 +219,14 @@
         </div>
         <div class="table-card">
           <h3 class="card-h">Your stats</h3>
+          <div class="wr-row paper">
+            <span class="wr-label">Win rate</span>
+            <select class="wr-select" id="wrProfile" aria-label="Show win rate for">
+              <option value="all">Overall</option>
+              <option value="classic">Classic</option>
+              <option value="ranked">Ranked</option>
+            </select>
+          </div>
           <dl class="stat-grid" id="statGrid"></dl>
           <p class="board-note">Win rates count Classic and Ranked games against real players. Games against the computer and Custom rooms don’t count.</p>
         </div>
